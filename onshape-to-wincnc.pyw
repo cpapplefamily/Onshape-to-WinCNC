@@ -27,7 +27,7 @@ when the conversion succeeds or if an error occurs.
 import os
 import re
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from typing import Optional
 
 
@@ -458,8 +458,30 @@ class ConverterGUI:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title('Onshape to WinCNC Converter')
+        self.root.configure(bg='#f4f6fb')
 
-        # Top instructions label
+        style = ttk.Style()
+        try:
+            style.theme_use('clam')
+        except tk.TclError:
+            # Fallback to default theme if clam is unavailable.
+            pass
+        style.configure('TFrame', background='#f4f6fb')
+        style.configure('Card.TFrame', background='#ffffff', borderwidth=1, relief='solid')
+        style.configure('Card.TLabel', background='#ffffff', font=('Segoe UI', 10))
+        style.configure('Heading.TLabel', background='#ffffff', font=('Segoe UI Semibold', 11))
+        style.configure('Body.TLabel', background='#f4f6fb', font=('Segoe UI', 10))
+        style.configure('Status.TLabel', background='#f4f6fb', foreground='#2563eb', font=('Segoe UI', 10))
+        style.configure('Accent.TButton', font=('Segoe UI Semibold', 11), padding=(12, 6), foreground='#ffffff',
+                        background='#2563eb')
+        style.map('Accent.TButton', background=[('active', '#1d4ed8')], foreground=[('disabled', '#d1d5db')])
+
+        self.main_frame = ttk.Frame(root, padding=20)
+        self.main_frame.grid(row=0, column=0, sticky='nsew')
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+
+        # Instruction card
         instructions = (
             "This program converts Onshape CAM Studio g-code to Shop Sabre WinCNC compatible g-code.\n"
             "To prepare your file for this operation, post from Onshape with these settings:\n"
@@ -467,64 +489,94 @@ class ConverterGUI:
             "  • Fixed Cycles = All options turned OFF\n"
             "  • Setup -> Position Type = Stock box point"
         )
-        self.info_label = tk.Label(
-            root,
+        info_card = ttk.Frame(self.main_frame, style='Card.TFrame', padding=15)
+        info_card.grid(row=0, column=0, sticky='ew')
+        info_label = ttk.Label(
+            info_card,
             text=instructions,
+            style='Card.TLabel',
             justify='left',
             anchor='w',
-            wraplength=600
+            wraplength=580
         )
-        self.info_label.grid(row=0, column=0, columnspan=3, sticky='w', padx=5, pady=(5, 10))
+        info_label.grid(row=0, column=0, sticky='w')
 
-        # Input file selection
-        self.input_label = tk.Label(root, text='Input G-code file:')
-        self.input_label.grid(row=1, column=0, sticky='w', padx=5, pady=5)
-        self.input_entry = tk.Entry(root, width=50)
-        self.input_entry.grid(row=1, column=1, padx=5, pady=5)
-        self.input_button = tk.Button(root, text='Browse...', command=self.select_input)
-        self.input_button.grid(row=1, column=2, padx=5, pady=5)
+        # File selection card
+        file_card = ttk.Frame(self.main_frame, style='Card.TFrame', padding=15)
+        file_card.grid(row=1, column=0, pady=15, sticky='ew')
+        file_card.columnconfigure(1, weight=1)
 
-        # Output file display (auto-generated)
-        self.output_label = tk.Label(root, text='Output file:')
-        self.output_label.grid(row=2, column=0, sticky='w', padx=5, pady=5)
-        self.output_entry = tk.Entry(root, width=50)
-        self.output_entry.grid(row=2, column=1, padx=5, pady=5)
+        ttk.Label(file_card, text='Input G-code file', style='Heading.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w', pady=(0, 10)
+        )
+        ttk.Label(file_card, text='Location', style='Card.TLabel').grid(row=1, column=0, sticky='w')
+        self.input_entry = ttk.Entry(file_card)
+        self.input_entry.grid(row=1, column=1, padx=10, sticky='ew')
+        ttk.Button(file_card, text='Browse…', command=self.select_input).grid(row=1, column=2)
+
+        ttk.Label(file_card, text='Output file name', style='Card.TLabel').grid(
+            row=2, column=0, sticky='w', pady=(12, 0)
+        )
+        self.output_entry = ttk.Entry(file_card)
+        self.output_entry.grid(row=2, column=1, padx=10, pady=(12, 0), sticky='ew')
         self.output_entry.configure(state='readonly')
 
-        # Options: remove coolant and tool change commands
+        # Options card
+        options_card = ttk.Frame(self.main_frame, style='Card.TFrame', padding=15)
+        options_card.grid(row=2, column=0, sticky='ew')
+        options_card.columnconfigure(0, weight=1)
+
+        ttk.Label(options_card, text='Conversion options', style='Heading.TLabel').grid(
+            row=0, column=0, sticky='w', pady=(0, 10)
+        )
+
         self.remove_coolant_var = tk.BooleanVar(value=True)
         self.remove_toolchange_var = tk.BooleanVar(value=True)
+        self.zero_plane_var = tk.StringVar(value="Top")
 
-        self.remove_coolant_check = tk.Checkbutton(
-            root,
+        self.remove_coolant_check = ttk.Checkbutton(
+            options_card,
             text='Remove coolant commands (M7/M8/M9)',
             variable=self.remove_coolant_var
         )
-        self.remove_coolant_check.grid(row=3, column=0, columnspan=3, sticky='w', padx=5, pady=(5, 0))
+        self.remove_coolant_check.grid(row=1, column=0, sticky='w')
 
-        self.remove_toolchange_check = tk.Checkbutton(
-            root,
+        self.remove_toolchange_check = ttk.Checkbutton(
+            options_card,
             text='Remove tool change commands (M6)',
             variable=self.remove_toolchange_var
         )
-        self.remove_toolchange_check.grid(row=4, column=0, columnspan=3, sticky='w', padx=5, pady=(0, 5))
+        self.remove_toolchange_check.grid(row=2, column=0, sticky='w', pady=(5, 0))
 
-        # Zero plane selection (Top / Bottom)
-        self.zero_plane_var = tk.StringVar(value="Top")
-        self.zero_plane_label = tk.Label(root, text='Zero Plane:')
-        self.zero_plane_label.grid(row=5, column=0, sticky='w', padx=5, pady=(5, 0))
-        self.zero_plane_menu = tk.OptionMenu(root, self.zero_plane_var, "Top", "Bottom")
-        self.zero_plane_menu.grid(row=5, column=1, sticky='w', padx=5, pady=(5, 0))
+        zero_plane_frame = ttk.Frame(options_card, style='Card.TFrame')
+        zero_plane_frame.grid(row=3, column=0, pady=(12, 0), sticky='w')
+        ttk.Label(zero_plane_frame, text='Zero plane', style='Card.TLabel').grid(row=0, column=0, sticky='w')
+        self.zero_plane_menu = ttk.Combobox(
+            zero_plane_frame,
+            textvariable=self.zero_plane_var,
+            values=['Top', 'Bottom'],
+            state='readonly',
+            width=10
+        )
+        self.zero_plane_menu.grid(row=0, column=1, padx=(10, 0))
 
-        # Convert button
-        self.convert_button = tk.Button(root, text='Convert', command=self.convert)
-        self.convert_button.grid(row=6, column=1, pady=10)
+        # Actions and status
+        action_frame = ttk.Frame(self.main_frame, style='TFrame', padding=(0, 15, 0, 0))
+        action_frame.grid(row=3, column=0, sticky='ew')
+        action_frame.columnconfigure(0, weight=1)
 
-        # Status message
+        self.convert_button = ttk.Button(
+            action_frame,
+            text='Convert File',
+            style='Accent.TButton',
+            command=self.convert
+        )
+        self.convert_button.grid(row=0, column=0, pady=(0, 10))
+
         self.status_var = tk.StringVar()
         self.status_var.set('Select a file to convert.')
-        self.status_label = tk.Label(root, textvariable=self.status_var, fg='blue')
-        self.status_label.grid(row=7, column=0, columnspan=3, padx=5, pady=5)
+        self.status_label = ttk.Label(action_frame, textvariable=self.status_var, style='Status.TLabel', wraplength=560)
+        self.status_label.grid(row=1, column=0, sticky='w')
 
     def select_input(self) -> None:
         """Handle the file selection dialog for the input file."""
