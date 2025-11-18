@@ -6,12 +6,9 @@ This module provides a simple graphical user interface (GUI) that allows
 operators to select a G-code file exported from Onshape CAM Studio and
 convert it to a WinCNC-compatible format for ShopSabre routers.  The
 interface guides the user through selecting the input file, displays the
-derived output file name (prefixed with ``SS_``), and provides feedback
+derived output file name (prefixed with ``SS23_``), and provides feedback
 during the conversion process.  A confirmation dialog alerts the user
 when the conversion succeeds or if an error occurs.
-
-The conversion logic is based on the ``onshape_to_wincnc.py`` script
-developed earlier.  It performs the following transformations:
 
 * Removes parentheses and semicolon comments because WinCNC uses
   square brackets for comments.
@@ -23,17 +20,14 @@ developed earlier.  It performs the following transformations:
   automatic tool changers.
 * Optionally removes coolant codes (``M7``, ``M8``, ``M9``) if they are
   not relevant for the machine.
+* Checks for likely Z-zero / Position Type mistakes, with behavior
+  dependent on the selected Zero Plane ("Top" or "Bottom").
 """
 
 import os
 import re
 import tkinter as tk
 from tkinter import filedialog, messagebox
-
-
-# -----------------------------------------------------------------------------
-#  Improved conversion routines
-#
 
 def remove_parentheses_comments(line: str) -> str:
     """Strip any text enclosed in parentheses from the line."""
@@ -263,23 +257,30 @@ def convert_lines(lines, remove_coolant: bool = True, remove_toolchange: bool = 
     return final_lines
 
 
-def detect_z_zero_issue(lines):
+def detect_z_zero_issue(lines, zero_plane: str = "Top") -> bool:
     """Detect whether the CAM output appears to have an incorrect Z-zero.
 
-    After the spindle turns on (M3 or M4), inspect all motion commands (G0/G1/G2/G3)
-    for Z coordinates.  If there are no negative Z values and the range of Z
-    heights is small, it's likely that the program is cutting above the stock
-    because the CAM setup used the wrong reference (world origin instead of
-    stock).  The heuristic implemented here is simple: if there is no
-    occurrence of "Z-" in any line after the first M3/M4, warn the user.
+    Behavior depends on the selected zero_plane:
+
+    * "Top": Assumes Z=0 is the top of the stock. After spindle on (M3/M4),
+      we expect at least one negative Z (cutting into the material). If no
+      Z- is ever seen, we assume a likely Position Type / Z-zero mistake.
+
+    * "Bottom": Assumes Z=0 is the bottom of the part. After spindle on
+      we expect Z to stay at or above 0 (Z >= 0). If any negative Z is
+      seen, we flag it as an issue (cutting below the part bottom / table).
 
     Args:
         lines: List of strings representing the input G-code file.
+        zero_plane: "Top" or "Bottom".
 
     Returns:
         True if a potential Z-zero problem is detected, False otherwise.
     """
+    zero_plane = (zero_plane or "Top").strip().title()
     spindle_on = False
+    saw_negative_z = False
+
     for line in lines:
         uline = line.upper()
         # Detect spindle on commands
@@ -288,12 +289,23 @@ def detect_z_zero_issue(lines):
             continue
         if not spindle_on:
             continue
-        # After spindle on, look for negative Z values
-        if 'Z-' in uline.replace(' ', ''):
-            # Found a negative Z; assume proper cutting depth
-            return False
-    # If we reach here and never found 'Z-' after spindle on, flag warning
-    return True
+
+        # Normalize away spaces so 'Z -0.050' still matches
+        compact = uline.replace(' ', '')
+        if 'Z-' in compact:
+            saw_negative_z = True
+            # For bottom-zero we can early-out: one negative Z is enough to flag.
+            if zero_plane == "Bottom":
+                return True
+
+    if zero_plane == "Top":
+        # Top-zero heuristic: if we never saw a negative Z after spindle on, warn.
+        if not saw_negative_z:
+            return True
+        return False
+    else:
+        # Bottom-zero heuristic: if we got here, we haven't seen any Z-, so we're OK.
+        return False
 
 
 def convert_file(
@@ -385,15 +397,22 @@ class ConverterGUI:
         )
         self.remove_toolchange_check.grid(row=4, column=0, columnspan=3, sticky='w', padx=5, pady=(0, 5))
 
+        # Zero plane selection (Top / Bottom)
+        self.zero_plane_var = tk.StringVar(value="Top")
+        self.zero_plane_label = tk.Label(root, text='Zero Plane:')
+        self.zero_plane_label.grid(row=5, column=0, sticky='w', padx=5, pady=(5, 0))
+        self.zero_plane_menu = tk.OptionMenu(root, self.zero_plane_var, "Top", "Bottom")
+        self.zero_plane_menu.grid(row=5, column=1, sticky='w', padx=5, pady=(5, 0))
+
         # Convert button
         self.convert_button = tk.Button(root, text='Convert', command=self.convert)
-        self.convert_button.grid(row=5, column=1, pady=10)
+        self.convert_button.grid(row=6, column=1, pady=10)
 
         # Status message
         self.status_var = tk.StringVar()
         self.status_var.set('Select a file to convert.')
         self.status_label = tk.Label(root, textvariable=self.status_var, fg='blue')
-        self.status_label.grid(row=6, column=0, columnspan=3, padx=5, pady=5)
+        self.status_label.grid(row=7, column=0, columnspan=3, padx=5, pady=5)
 
     def select_input(self) -> None:
         """Handle the file selection dialog for the input file."""
@@ -408,14 +427,14 @@ class ConverterGUI:
             return
         self.input_entry.delete(0, tk.END)
         self.input_entry.insert(0, path)
-        # Derive output file name: prefix with SS_ and ensure .tap extension
+        # Derive output file name: prefix with SS23_ and ensure .tap extension
         base_name = os.path.basename(path)
         name_root, ext = os.path.splitext(base_name)
         if not ext:
             ext = '.tap'
         else:
             ext = '.tap'  # unify extension for WinCNC
-        out_name = f"SS_{name_root}{ext}"
+        out_name = f"SS23_{name_root}{ext}"
         out_path = os.path.join(os.path.dirname(path), out_name)
         self.output_entry.configure(state='normal')
         self.output_entry.delete(0, tk.END)
@@ -427,6 +446,8 @@ class ConverterGUI:
         """Perform the conversion when the Convert button is clicked."""
         input_path = self.input_entry.get().strip()
         output_path = self.output_entry.get().strip()
+        zero_plane = self.zero_plane_var.get().strip().title() or "Top"
+
         if not input_path:
             messagebox.showerror('Error', 'No input file selected.')
             return
@@ -442,18 +463,28 @@ class ConverterGUI:
                 in_lines = f_in.readlines()
 
             # Detect potential SETUP -> POSITION TYPE / Z-zero issues BEFORE conversion.
-            # If detected, show an error (red X + failure sound) and abort.
-            if detect_z_zero_issue(in_lines):
-                self.status_var.set('Conversion aborted due to POSITION TYPE error.')
-                messagebox.showerror(
-                    'POSITION TYPE Error Detected',
-                    (
-                        'Z-zero appears to be incorrect (no cutting below Z0 after spindle on).\n\n'
+            if detect_z_zero_issue(in_lines, zero_plane=zero_plane):
+                self.status_var.set('Conversion aborted due to Z-zero / POSITION TYPE error.')
+                if zero_plane == "Top":
+                    msg = (
+                        'Z-zero appears to be incorrect for a TOP-of-stock zero.\n'
+                        'No cutting moves go below Z0 after the spindle turns on.\n\n'
                         'Be sure to use:\n'
                         '  Setup -> Position Type = Stock box point\n'
-                        'in Onshape CAM, then repost your file and try again.'
+                        'with Z0 at the TOP of the stock in Onshape CAM,\n'
+                        'then repost your file and try again.'
                     )
-                )
+                else:  # Bottom
+                    msg = (
+                        'Z-zero appears to be incorrect for a BOTTOM-of-part zero.\n'
+                        'Cutting moves go below Z0 after the spindle turns on,\n'
+                        'which suggests the zero plane or Position Type is wrong.\n\n'
+                        'Be sure to use:\n'
+                        '  Setup -> Position Type = Stock box point\n'
+                        'with Z0 at the BOTTOM of the part in Onshape CAM,\n'
+                        'then repost your file and try again.'
+                    )
+                messagebox.showerror('Z-Zero / POSITION TYPE Error Detected', msg)
                 return
 
             # If no issue detected, perform conversion
