@@ -751,22 +751,41 @@ class ConverterGUI:
         ttk.Label(card, text='Command', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
         self.tool_command_var = tk.StringVar(value=self.settings.tool_change_command)
         ttk.Entry(card, textvariable=self.tool_command_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Label(
+            card,
+            text="Enter the WinCNC command issued when an M6 is encountered (e.g., 'TC').",
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=2, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(card, text='Coolant Output Channels', style='Heading.TLabel').grid(row=2, column=0, columnspan=2, sticky='w', pady=(20, 0))
+        ttk.Label(card, text='Coolant Output Channels', style='Heading.TLabel').grid(row=3, column=0, columnspan=2, sticky='w', pady=(20, 0))
 
-        ttk.Label(card, text='Mist (M7)', style='Card.TLabel').grid(row=3, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(card, text='Mist (M7)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
         self.mist_output_var = tk.StringVar(value='' if self.settings.mist_output is None else str(self.settings.mist_output))
-        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=3, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Label(
+            card,
+            text='Positive WinCNC SO channel that should turn on when M7 runs.',
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=5, column=0, columnspan=2, sticky='w')
 
-        ttk.Label(card, text='Flood (M8)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(card, text='Flood (M8)', style='Card.TLabel').grid(row=6, column=0, sticky='w', pady=(8, 0))
         self.flood_output_var = tk.StringVar(value='' if self.settings.flood_output is None else str(self.settings.flood_output))
-        ttk.Entry(card, textvariable=self.flood_output_var).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Entry(card, textvariable=self.flood_output_var).grid(row=6, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Label(
+            card,
+            text='Positive WinCNC SO channel that should turn on when M8 runs.',
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=7, column=0, columnspan=2, sticky='w')
 
         ttk.Label(
             card,
-            text='Leave coolant outputs blank to disable those commands.',
-            style='Card.TLabel'
-        ).grid(row=5, column=0, columnspan=2, sticky='w', pady=(12, 0))
+            text='Leave coolant outputs blank to disable those commands. Channels must match the SO,<n>,<state> wiring on your machine.',
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=8, column=0, columnspan=2, sticky='w', pady=(12, 0))
 
         button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
         button_frame.grid(row=1, column=0, sticky='ew')
