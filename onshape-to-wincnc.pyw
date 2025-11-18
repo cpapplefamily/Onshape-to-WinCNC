@@ -60,6 +60,9 @@ class MachineSettings:
     tool_change_command: str = 'TC'
     mist_output: Optional[int] = 1
     flood_output: Optional[int] = 2
+    output_directory: Optional[str] = None
+    output_name_mode: str = 'prefix'
+    output_name_value: str = 'SS23_'
 
     @staticmethod
     def _coerce_channel(value, fallback: Optional[int]) -> Optional[int]:
@@ -77,6 +80,9 @@ class MachineSettings:
             'tool_change_command': (os.environ.get('SHOP_SABRE_TOOL_CHANGE_CMD', 'TC').strip().upper() or 'TC'),
             'mist_output': _env_int('SHOP_SABRE_MIST_OUTPUT', 1),
             'flood_output': _env_int('SHOP_SABRE_FLOOD_OUTPUT', 2),
+            'output_directory': None,
+            'output_name_mode': 'prefix',
+            'output_name_value': 'SS23_',
         }
         data = {}
         if SETTINGS_FILE.exists():
@@ -88,7 +94,20 @@ class MachineSettings:
         tool = tool or defaults['tool_change_command']
         mist = cls._coerce_channel(data.get('mist_output'), defaults['mist_output'])
         flood = cls._coerce_channel(data.get('flood_output'), defaults['flood_output'])
-        return cls(tool_change_command=tool, mist_output=mist, flood_output=flood)
+        raw_directory = data.get('output_directory')
+        directory = str(raw_directory).strip() if raw_directory else ''
+        directory = os.path.abspath(os.path.expanduser(directory)) if directory else None
+        mode_raw = str(data.get('output_name_mode', defaults['output_name_mode'])).strip().lower()
+        mode = mode_raw if mode_raw in ('prefix', 'suffix') else defaults['output_name_mode']
+        name_value = str(data.get('output_name_value', defaults['output_name_value']))
+        return cls(
+            tool_change_command=tool,
+            mist_output=mist,
+            flood_output=flood,
+            output_directory=directory,
+            output_name_mode=mode,
+            output_name_value=name_value,
+        )
 
     def save(self) -> None:
         SETTINGS_FILE.write_text(json.dumps(asdict(self), indent=2), encoding='utf-8')
@@ -504,6 +523,7 @@ class ConverterGUI:
         self.root.configure(bg='#f4f6fb')
         self.settings = SETTINGS
         self.settings_window: Optional[tk.Toplevel] = None
+        self.output_settings_window: Optional[tk.Toplevel] = None
 
         style = ttk.Style()
         try:
@@ -631,6 +651,7 @@ class ConverterGUI:
         menubar = tk.Menu(self.root)
         customize_menu = tk.Menu(menubar, tearoff=0)
         customize_menu.add_command(label='Machine Settings…', command=self.open_customize_dialog)
+        customize_menu.add_command(label='Output Settings…', command=self.open_output_settings_dialog)
         menubar.add_cascade(label='Customize', menu=customize_menu)
         self.root.config(menu=menubar)
         self.menubar = menubar
@@ -648,20 +669,35 @@ class ConverterGUI:
             return
         self.input_entry.delete(0, tk.END)
         self.input_entry.insert(0, path)
-        # Derive output file name: prefix with SS23_ and ensure .tap extension
-        base_name = os.path.basename(path)
-        name_root, ext = os.path.splitext(base_name)
-        if not ext:
-            ext = '.tap'
-        else:
-            ext = '.tap'  # unify extension for WinCNC
-        out_name = f"SS23_{name_root}{ext}"
-        out_path = os.path.join(os.path.dirname(path), out_name)
+        out_path = self._derive_output_path(path)
+        self._set_output_entry(out_path)
+        self.status_var.set('Ready to convert.')
+
+    def _set_output_entry(self, value: str) -> None:
         self.output_entry.configure(state='normal')
         self.output_entry.delete(0, tk.END)
-        self.output_entry.insert(0, out_path)
+        self.output_entry.insert(0, value)
         self.output_entry.configure(state='readonly')
-        self.status_var.set('Ready to convert.')
+
+    def _derive_output_path(self, input_path: str) -> str:
+        directory = self.settings.output_directory or os.path.dirname(input_path)
+        directory = os.path.abspath(os.path.expanduser(directory))
+        base_name = os.path.basename(input_path)
+        name_root, _ = os.path.splitext(base_name)
+        ext = '.tap'
+        value = self.settings.output_name_value or ''
+        if self.settings.output_name_mode == 'suffix':
+            file_name = f"{name_root}{value}{ext}"
+        else:
+            file_name = f"{value}{name_root}{ext}"
+        return os.path.join(directory, file_name)
+
+    def _update_output_entry_for_current_input(self) -> None:
+        input_path = self.input_entry.get().strip()
+        if not input_path:
+            return
+        derived = self._derive_output_path(input_path)
+        self._set_output_entry(derived)
 
     def convert(self) -> None:
         """Perform the conversion when the Convert button is clicked."""
@@ -808,6 +844,126 @@ class ConverterGUI:
         if self.settings_window:
             self.settings_window.destroy()
             self.settings_window = None
+
+    def open_output_settings_dialog(self) -> None:
+        """Open dialog for configuring output directory and file naming."""
+
+        if self.output_settings_window and tk.Toplevel.winfo_exists(self.output_settings_window):
+            self.output_settings_window.lift()
+            self.output_settings_window.focus_set()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title('Customize Output Settings')
+        win.configure(bg='#f4f6fb')
+        win.resizable(False, False)
+        win.transient(self.root)
+        self.output_settings_window = win
+        self.output_settings_window.protocol('WM_DELETE_WINDOW', self._close_output_settings_window)
+
+        container = ttk.Frame(win, padding=20)
+        container.grid(row=0, column=0, sticky='nsew')
+
+        card = ttk.Frame(container, style='Card.TFrame', padding=15)
+        card.grid(row=0, column=0, sticky='ew')
+        card.columnconfigure(1, weight=1)
+
+        ttk.Label(card, text='Default Output Location', style='Heading.TLabel').grid(
+            row=0, column=0, columnspan=3, sticky='w'
+        )
+        ttk.Label(card, text='Folder', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
+        self.output_dir_var = tk.StringVar(value=self.settings.output_directory or '')
+        dir_entry = ttk.Entry(card, textvariable=self.output_dir_var)
+        dir_entry.grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Button(card, text='Browse…', command=self._browse_output_directory).grid(
+            row=1, column=2, padx=(10, 0), pady=(8, 0)
+        )
+        ttk.Label(
+            card,
+            text='Leave blank to save next to the selected input file.',
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=2, column=0, columnspan=3, sticky='w')
+
+        ttk.Label(card, text='File Name Format', style='Heading.TLabel').grid(
+            row=3, column=0, columnspan=3, sticky='w', pady=(20, 0)
+        )
+        ttk.Label(card, text='Mode', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
+        self.output_mode_var = tk.StringVar(
+            value='Prefix' if self.settings.output_name_mode == 'prefix' else 'Suffix'
+        )
+        ttk.Combobox(
+            card,
+            textvariable=self.output_mode_var,
+            values=['Prefix', 'Suffix'],
+            state='readonly',
+            width=10,
+        ).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='w')
+
+        ttk.Label(card, text='Text', style='Card.TLabel').grid(row=5, column=0, sticky='w', pady=(8, 0))
+        self.output_value_var = tk.StringVar(value=self.settings.output_name_value)
+        ttk.Entry(card, textvariable=self.output_value_var).grid(
+            row=5, column=1, columnspan=2, padx=(10, 0), pady=(8, 0), sticky='ew'
+        )
+        ttk.Label(
+            card,
+            text='Example: prefix of "SS23_" makes SS23_part.tap; suffix of "_WIN" makes part_WIN.tap.',
+            style='Card.TLabel',
+            wraplength=360,
+        ).grid(row=6, column=0, columnspan=3, sticky='w', pady=(4, 0))
+
+        button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
+        button_frame.grid(row=1, column=0, sticky='ew')
+        button_frame.columnconfigure(0, weight=1)
+
+        ttk.Button(
+            button_frame,
+            text='Save Output Settings',
+            style='Accent.TButton',
+            command=self._save_output_settings
+        ).grid(row=0, column=0, sticky='ew')
+
+        ttk.Button(
+            button_frame,
+            text='Cancel',
+            command=self._close_output_settings_window
+        ).grid(row=1, column=0, sticky='ew', pady=(10, 0))
+
+    def _browse_output_directory(self) -> None:
+        directory = filedialog.askdirectory(title='Select output directory')
+        if not directory:
+            return
+        self.output_dir_var.set(directory)
+
+    def _close_output_settings_window(self) -> None:
+        if self.output_settings_window:
+            self.output_settings_window.destroy()
+            self.output_settings_window = None
+
+    def _save_output_settings(self) -> None:
+        directory = self.output_dir_var.get().strip()
+        normalized_dir = os.path.abspath(os.path.expanduser(directory)) if directory else None
+        if normalized_dir and not os.path.isdir(normalized_dir):
+            messagebox.showerror('Invalid Directory', 'The selected directory does not exist. Create it first or leave blank.')
+            return
+
+        mode = self.output_mode_var.get().strip().lower()
+        mode = 'prefix' if mode not in ('prefix', 'suffix') else mode
+        value = self.output_value_var.get()
+
+        self.settings.output_directory = normalized_dir
+        self.settings.output_name_mode = mode
+        self.settings.output_name_value = value
+
+        try:
+            self.settings.save()
+        except OSError as exc:
+            messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
+            return
+
+        self._update_output_entry_for_current_input()
+        messagebox.showinfo('Settings Saved', 'Output settings saved successfully.')
+        self._close_output_settings_window()
 
     def _parse_channel_value(self, raw: str, label: str) -> Optional[int]:
         value = (raw or '').strip()
