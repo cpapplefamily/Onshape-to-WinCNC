@@ -24,11 +24,17 @@ when the conversion succeeds or if an error occurs.
   dependent on the selected Zero Plane ("Top" or "Bottom").
 """
 
+import json
 import os
 import re
+from dataclasses import dataclass, asdict
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
+
+
+SETTINGS_FILE = Path.home() / '.onshape_to_wincnc_settings.json'
 
 
 def _env_int(name: str, default: Optional[int]) -> Optional[int]:
@@ -47,11 +53,48 @@ def _env_int(name: str, default: Optional[int]) -> Optional[int]:
     return value if value > 0 else None
 
 
-SHOP_SABRE_TOOL_CHANGE_COMMAND = (
-    os.environ.get('SHOP_SABRE_TOOL_CHANGE_CMD', 'TC').strip().upper() or 'TC'
-)
-SHOP_SABRE_MIST_OUTPUT = _env_int('SHOP_SABRE_MIST_OUTPUT', 1)
-SHOP_SABRE_FLOOD_OUTPUT = _env_int('SHOP_SABRE_FLOOD_OUTPUT', 2)
+@dataclass
+class MachineSettings:
+    """Represents user-editable ShopSabre integration parameters."""
+
+    tool_change_command: str = 'TC'
+    mist_output: Optional[int] = 1
+    flood_output: Optional[int] = 2
+
+    @staticmethod
+    def _coerce_channel(value, fallback: Optional[int]) -> Optional[int]:
+        if value in (None, ''):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        return parsed if parsed > 0 else fallback
+
+    @classmethod
+    def load(cls) -> 'MachineSettings':
+        defaults = {
+            'tool_change_command': (os.environ.get('SHOP_SABRE_TOOL_CHANGE_CMD', 'TC').strip().upper() or 'TC'),
+            'mist_output': _env_int('SHOP_SABRE_MIST_OUTPUT', 1),
+            'flood_output': _env_int('SHOP_SABRE_FLOOD_OUTPUT', 2),
+        }
+        data = {}
+        if SETTINGS_FILE.exists():
+            try:
+                data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
+            except Exception:
+                data = {}
+        tool = str(data.get('tool_change_command', defaults['tool_change_command'])).strip().upper()
+        tool = tool or defaults['tool_change_command']
+        mist = cls._coerce_channel(data.get('mist_output'), defaults['mist_output'])
+        flood = cls._coerce_channel(data.get('flood_output'), defaults['flood_output'])
+        return cls(tool_change_command=tool, mist_output=mist, flood_output=flood)
+
+    def save(self) -> None:
+        SETTINGS_FILE.write_text(json.dumps(asdict(self), indent=2), encoding='utf-8')
+
+
+SETTINGS = MachineSettings.load()
 
 def remove_parentheses_comments(line: str) -> str:
     """Strip any text enclosed in parentheses from the line."""
@@ -115,7 +158,7 @@ def process_arc_line(line: str, last_g: str):
 def translate_tool_change_command(tool_number: Optional[str]) -> str:
     """Map M6 requests to the ShopSabre-specific TC command."""
 
-    base = SHOP_SABRE_TOOL_CHANGE_COMMAND
+    base = SETTINGS.tool_change_command
     if tool_number:
         return f"{base},{tool_number}"
     return f"{base} [Tool change requested without explicit T-word]"
@@ -133,12 +176,12 @@ def translate_coolant_code(code: str) -> list[str]:
         lines.append(f"SO,{channel},{state}")
 
     if upper == 'M7':
-        _append(SHOP_SABRE_MIST_OUTPUT, 1)
+        _append(SETTINGS.mist_output, 1)
     elif upper == 'M8':
-        _append(SHOP_SABRE_FLOOD_OUTPUT, 1)
+        _append(SETTINGS.flood_output, 1)
     elif upper == 'M9':
-        _append(SHOP_SABRE_MIST_OUTPUT, 0)
-        _append(SHOP_SABRE_FLOOD_OUTPUT, 0)
+        _append(SETTINGS.mist_output, 0)
+        _append(SETTINGS.flood_output, 0)
     return lines
 
 
@@ -459,6 +502,8 @@ class ConverterGUI:
         self.root = root
         self.root.title('Onshape to WinCNC Converter')
         self.root.configure(bg='#f4f6fb')
+        self.settings = SETTINGS
+        self.settings_window: Optional[tk.Toplevel] = None
 
         style = ttk.Style()
         try:
@@ -475,6 +520,8 @@ class ConverterGUI:
         style.configure('Accent.TButton', font=('Segoe UI Semibold', 11), padding=(12, 6), foreground='#ffffff',
                         background='#2563eb')
         style.map('Accent.TButton', background=[('active', '#1d4ed8')], foreground=[('disabled', '#d1d5db')])
+
+        self._build_menu()
 
         self.main_frame = ttk.Frame(root, padding=20)
         self.main_frame.grid(row=0, column=0, sticky='nsew')
@@ -578,6 +625,16 @@ class ConverterGUI:
         self.status_label = ttk.Label(action_frame, textvariable=self.status_var, style='Status.TLabel', wraplength=560)
         self.status_label.grid(row=1, column=0, sticky='w')
 
+    def _build_menu(self) -> None:
+        """Create the application menu bar with customization entry."""
+
+        menubar = tk.Menu(self.root)
+        customize_menu = tk.Menu(menubar, tearoff=0)
+        customize_menu.add_command(label='Machine Settings…', command=self.open_customize_dialog)
+        menubar.add_cascade(label='Customize', menu=customize_menu)
+        self.root.config(menu=menubar)
+        self.menubar = menubar
+
     def select_input(self) -> None:
         """Handle the file selection dialog for the input file."""
         path = filedialog.askopenfilename(
@@ -666,6 +723,108 @@ class ConverterGUI:
         except Exception as e:
             self.status_var.set('Conversion failed.')
             messagebox.showerror('Error', f'An error occurred during conversion:\n{e}')
+
+    def open_customize_dialog(self) -> None:
+        """Open the customization dialog for coolant/tool change parameters."""
+
+        if self.settings_window and tk.Toplevel.winfo_exists(self.settings_window):
+            self.settings_window.lift()
+            self.settings_window.focus_set()
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title('Customize Machine Settings')
+        win.configure(bg='#f4f6fb')
+        win.resizable(False, False)
+        win.transient(self.root)
+        self.settings_window = win
+        self.settings_window.protocol('WM_DELETE_WINDOW', self._close_settings_window)
+
+        container = ttk.Frame(win, padding=20)
+        container.grid(row=0, column=0, sticky='nsew')
+
+        card = ttk.Frame(container, style='Card.TFrame', padding=15)
+        card.grid(row=0, column=0, sticky='ew')
+        card.columnconfigure(1, weight=1)
+
+        ttk.Label(card, text='Tool Change Command', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w')
+        ttk.Label(card, text='Command', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
+        self.tool_command_var = tk.StringVar(value=self.settings.tool_change_command)
+        ttk.Entry(card, textvariable=self.tool_command_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+
+        ttk.Label(card, text='Coolant Output Channels', style='Heading.TLabel').grid(row=2, column=0, columnspan=2, sticky='w', pady=(20, 0))
+
+        ttk.Label(card, text='Mist (M7)', style='Card.TLabel').grid(row=3, column=0, sticky='w', pady=(8, 0))
+        self.mist_output_var = tk.StringVar(value='' if self.settings.mist_output is None else str(self.settings.mist_output))
+        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=3, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+
+        ttk.Label(card, text='Flood (M8)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
+        self.flood_output_var = tk.StringVar(value='' if self.settings.flood_output is None else str(self.settings.flood_output))
+        ttk.Entry(card, textvariable=self.flood_output_var).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+
+        ttk.Label(
+            card,
+            text='Leave coolant outputs blank to disable those commands.',
+            style='Card.TLabel'
+        ).grid(row=5, column=0, columnspan=2, sticky='w', pady=(12, 0))
+
+        button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
+        button_frame.grid(row=1, column=0, sticky='ew')
+        button_frame.columnconfigure(0, weight=1)
+
+        ttk.Button(
+            button_frame,
+            text='Save Settings',
+            style='Accent.TButton',
+            command=self._save_settings_from_dialog
+        ).grid(row=0, column=0, sticky='ew')
+
+        ttk.Button(
+            button_frame,
+            text='Cancel',
+            command=self._close_settings_window
+        ).grid(row=1, column=0, sticky='ew', pady=(10, 0))
+
+    def _close_settings_window(self) -> None:
+        if self.settings_window:
+            self.settings_window.destroy()
+            self.settings_window = None
+
+    def _parse_channel_value(self, raw: str, label: str) -> Optional[int]:
+        value = (raw or '').strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValueError(f'{label} must be a positive integer or left blank.')
+        if parsed <= 0:
+            raise ValueError(f'{label} must be greater than zero.')
+        return parsed
+
+    def _save_settings_from_dialog(self) -> None:
+        tool_cmd = self.tool_command_var.get().strip().upper()
+        if not tool_cmd:
+            messagebox.showerror('Invalid Value', 'Tool change command cannot be empty.')
+            return
+        try:
+            mist = self._parse_channel_value(self.mist_output_var.get(), 'Mist output')
+            flood = self._parse_channel_value(self.flood_output_var.get(), 'Flood output')
+        except ValueError as exc:
+            messagebox.showerror('Invalid Value', str(exc))
+            return
+
+        self.settings.tool_change_command = tool_cmd
+        self.settings.mist_output = mist
+        self.settings.flood_output = flood
+        try:
+            self.settings.save()
+        except OSError as exc:
+            messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
+            return
+
+        messagebox.showinfo('Settings Saved', 'Machine settings saved successfully.')
+        self._close_settings_window()
 
 
 def main() -> None:

@@ -17,13 +17,10 @@ This script takes G-code exported from Onshape CAM Studio and rewrites it into a
 
 By default the converter assumes the ShopSabre wiring that WinCNC documents: `SO,1,1` toggles the mist output (used for M7) and `SO,2,1` toggles the flood/dust output (used for M8). `M9` is translated into `SO,1,0` and `SO,2,0` to shut everything off. Automatic tool changes are issued with the WinCNC `TC,<tool>` command using the most recent `T` word that appeared in the Onshape program.
 
-If your machine uses different outputs or a different macro for the tool changer you can override the defaults with environment variables before launching the GUI:
-
-```
-set SHOP_SABRE_MIST_OUTPUT=5   # Use SO,5,* instead of SO,1,* for M7
-set SHOP_SABRE_FLOOD_OUTPUT=6  # Use SO,6,* instead of SO,2,* for M8
-set SHOP_SABRE_TOOL_CHANGE_CMD=M31  # Issue "M31,<tool>" instead of "TC,<tool>"
-```
+If your machine uses different outputs or a different macro for the tool changer you can update them directly inside the app.
+Use **Customize → Machine Settings…** in the menu bar to edit the tool-change command and coolant output channels. Those values
+are stored in your user profile so they persist between runs. Any environment variables you set are still honored the first time
+you launch the tool (before you save your own values).
 
 Leave the checkboxes unchecked when you want these WinCNC-specific commands emitted; check them to strip the codes entirely.
 
