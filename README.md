@@ -11,7 +11,21 @@ Python is required to run the program- you can install it via the microsoft stor
 ---
 
 # What does the script do?
-This script takes G-code exported from Onshape CAM Studio and rewrites it into a format that ShopSabre’s WinCNC controller can safely and reliably run. WinCNC is far more strict than generic Fanuc-style posts, so the script cleans and restructures the file: it removes unsupported tokens (program numbers, comments, redundant modal codes), splits combined commands (like S and M3), forces WinCNC-safe arc formatting, normalizes motion commands, and ensures the correct placement of things like tool-length cancel (G49). It also includes optional removal of coolant and tool-change commands via GUI checkboxes. Before converting, the script analyzes Z-values after spindle start to detect if Onshape’s Setup → Position Type was incorrectly set—blocking conversion with a red error dialog if the toolpath would cut entirely above the stock. The result is a clean .tap file prefixed with SS_, ready to run on a ShopSabre without syntax errors, unexpected behavior, or manual editing.
+This script takes G-code exported from Onshape CAM Studio and rewrites it into a format that ShopSabre’s WinCNC controller can safely and reliably run. WinCNC is far more strict than generic Fanuc-style posts, so the script cleans and restructures the file: it removes unsupported tokens (program numbers, comments, redundant modal codes), splits combined commands (like S and M3), forces WinCNC-safe arc formatting, normalizes motion commands, and ensures the correct placement of things like tool-length cancel (G49). It also includes optional removal of coolant and tool-change commands via GUI checkboxes. When you leave those options unchecked the converter now rewrites `M7/M8/M9` into WinCNC `SO,<channel>,<state>` output toggles and maps `M6` to the ShopSabre `TC,<tool>` automatic tool change command so that coolant and tool swaps actually run on the router instead of being dropped or ignored. Before converting, the script analyzes Z-values after spindle start to detect if Onshape’s Setup → Position Type was incorrectly set—blocking conversion with a red error dialog if the toolpath would cut entirely above the stock. The result is a clean .tap file prefixed with SS_, ready to run on a ShopSabre without syntax errors, unexpected behavior, or manual editing.
+
+### ShopSabre coolant & tool-change mapping
+
+By default the converter assumes the ShopSabre wiring that WinCNC documents: `SO,1,1` toggles the mist output (used for M7) and `SO,2,1` toggles the flood/dust output (used for M8). `M9` is translated into `SO,1,0` and `SO,2,0` to shut everything off. Automatic tool changes are issued with the WinCNC `TC,<tool>` command using the most recent `T` word that appeared in the Onshape program.
+
+If your machine uses different outputs or a different macro for the tool changer you can override the defaults with environment variables before launching the GUI:
+
+```
+set SHOP_SABRE_MIST_OUTPUT=5   # Use SO,5,* instead of SO,1,* for M7
+set SHOP_SABRE_FLOOD_OUTPUT=6  # Use SO,6,* instead of SO,2,* for M8
+set SHOP_SABRE_TOOL_CHANGE_CMD=M31  # Issue "M31,<tool>" instead of "TC,<tool>"
+```
+
+Leave the checkboxes unchecked when you want these WinCNC-specific commands emitted; check them to strip the codes entirely.
 
 ---
 
