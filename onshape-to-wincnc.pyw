@@ -605,7 +605,7 @@ class ConverterGUI:
             row=1, column=0, sticky='w'
         )
 
-        mist_frame = ttk.Frame(options_card, style='Card.TFrame')
+        mist_frame = ttk.Frame(options_card, style='Card.TFrame', padding=10)
         mist_frame.grid(row=2, column=0, sticky='ew', pady=(6, 0))
         mist_frame.columnconfigure(1, weight=1)
 
@@ -625,7 +625,7 @@ class ConverterGUI:
             row=4, column=0, sticky='w', pady=(12, 0)
         )
 
-        flood_frame = ttk.Frame(options_card, style='Card.TFrame')
+        flood_frame = ttk.Frame(options_card, style='Card.TFrame', padding=10)
         flood_frame.grid(row=5, column=0, sticky='ew', pady=(6, 0))
         flood_frame.columnconfigure(1, weight=1)
 
