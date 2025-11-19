@@ -209,11 +209,12 @@ def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: b
     """Filter out tokens that WinCNC does not support or should be handled separately.
 
     Removes program delimiters (%, O#####), line numbers (N####), tool
-    selection (T#), tool length offsets (H#). Optionally removes coolant
-    codes (M7/M8/M9) and tool change commands (M6). Omits plane
-    selection, cutter compensation and canned cycle cancel codes
-    (G17, G40, G80). G49 (tool length cancel) is retained and handled
-    in a post-processing step.
+    length offsets (H#). Optionally removes coolant codes (M7/M8/M9) and
+    tool change commands (M6). Omits plane selection, cutter
+    compensation and canned cycle cancel codes (G17, G40, G80). G49
+    (tool length cancel) is retained and handled in a post-processing
+    step. Tool selection (T#) words are preserved when tool changes are
+    kept so they can be paired with M6 in WinCNC's expected format.
     """
     result = []
     for tok in tokens:
@@ -228,6 +229,9 @@ def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: b
             continue
         # Remove tool selection and length offset words
         if up.startswith('T') and up[1:].replace('.', '').isdigit():
+            if remove_toolchange:
+                continue
+            result.append(up)
             continue
         if up.startswith('H') and up[1:].replace('.', '').isdigit():
             continue
@@ -252,6 +256,43 @@ def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: b
             continue
         result.append(tok)
     return result
+
+
+def normalize_tool_change(tokens: list[str]) -> list[str]:
+    """Ensure tool changes follow the "TX M6" format expected by WinCNC."""
+
+    if not tokens:
+        return tokens
+
+    tool_token = None
+    has_m6 = False
+    for tok in tokens:
+        up = tok.upper()
+        if up.startswith('T') and up[1:].replace('.', '').isdigit():
+            if tool_token is None:
+                tool_token = up
+            continue
+        if up == 'M6':
+            has_m6 = True
+
+    if not has_m6:
+        return tokens
+
+    remaining = []
+    for tok in tokens:
+        up = tok.upper()
+        if up == 'M6':
+            continue
+        if up.startswith('T') and up[1:].replace('.', '').isdigit():
+            continue
+        remaining.append(tok)
+
+    ordered = []
+    if tool_token:
+        ordered.append(tool_token)
+    ordered.append('M6')
+    ordered.extend(remaining)
+    return ordered
 
 
 def split_by_multiple_commands(tokens):
@@ -319,6 +360,7 @@ def convert_lines(
             tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_toolchange, mist_port)
             if not tokens:
                 continue
+            tokens = normalize_tool_change(tokens)
             grouped = split_by_multiple_commands(tokens)
             for group in grouped:
                 if not group:
