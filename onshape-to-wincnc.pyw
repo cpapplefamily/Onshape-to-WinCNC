@@ -641,7 +641,7 @@ class ConverterGUI:
 
         self.remove_toolchange_check = ttk.Checkbutton(
             options_card,
-            text='Remove tool change commands (M6)',
+            text='Remove all tool change commands (M6)',
             variable=self.remove_toolchange_var,
             command=self._toggle_remove_toolchange,
         )
