@@ -61,6 +61,21 @@ class MachineSettings:
     output_directory: Optional[str] = None
     output_name_mode: str = 'prefix'
     output_name_value: str = 'SS23_'
+    remove_toolchange: bool = True
+
+    @staticmethod
+    def _coerce_bool(value, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {'true', '1', 'yes', 'on'}:
+                return True
+            if normalized in {'false', '0', 'no', 'off'}:
+                return False
+        return fallback
 
     @staticmethod
     def _coerce_channel(value, fallback: Optional[int]) -> Optional[int]:
@@ -80,6 +95,7 @@ class MachineSettings:
             'output_directory': None,
             'output_name_mode': 'prefix',
             'output_name_value': 'SS23_',
+            'remove_toolchange': True,
         }
         data = {}
         if SETTINGS_FILE.exists():
@@ -98,12 +114,17 @@ class MachineSettings:
         mode_raw = str(data.get('output_name_mode', defaults['output_name_mode'])).strip().lower()
         mode = mode_raw if mode_raw in ('prefix', 'suffix') else defaults['output_name_mode']
         name_value = str(data.get('output_name_value', defaults['output_name_value']))
+        remove_toolchange = cls._coerce_bool(
+            data.get('remove_toolchange'),
+            defaults['remove_toolchange'],
+        )
         return cls(
             mist_port=mist,
             flood_port=flood,
             output_directory=directory,
             output_name_mode=mode,
             output_name_value=name_value,
+            remove_toolchange=remove_toolchange,
         )
 
     def save(self) -> None:
@@ -576,7 +597,7 @@ class ConverterGUI:
             row=0, column=0, sticky='w', pady=(0, 10)
         )
 
-        self.remove_toolchange_var = tk.BooleanVar(value=True)
+        self.remove_toolchange_var = tk.BooleanVar(value=self.settings.remove_toolchange)
         self.mist_port_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
         self.flood_port_var = tk.StringVar(value='' if self.settings.flood_port is None else str(self.settings.flood_port))
 
@@ -621,7 +642,8 @@ class ConverterGUI:
         self.remove_toolchange_check = ttk.Checkbutton(
             options_card,
             text='Remove tool change commands (M6)',
-            variable=self.remove_toolchange_var
+            variable=self.remove_toolchange_var,
+            command=self._toggle_remove_toolchange,
         )
         self.remove_toolchange_check.grid(row=7, column=0, sticky='w', pady=(5, 0))
 
@@ -685,6 +707,21 @@ class ConverterGUI:
             return
         derived = self._derive_output_path(input_path)
         self._set_output_entry(derived)
+
+    def _toggle_remove_toolchange(self) -> None:
+        """Persist the user's preference for stripping tool changes."""
+
+        self.settings.remove_toolchange = self.remove_toolchange_var.get()
+        try:
+            self.settings.save()
+        except OSError as exc:
+            messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
+            self.remove_toolchange_var.set(self.settings.remove_toolchange)
+            return
+
+        self.status_var.set(
+            'Tool change removal enabled.' if self.settings.remove_toolchange else 'Tool change removal disabled.'
+        )
 
     def convert(self) -> None:
         """Perform the conversion when the Convert button is clicked."""
