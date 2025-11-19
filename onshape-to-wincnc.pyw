@@ -593,7 +593,7 @@ class ConverterGUI:
         options_card.columnconfigure(0, weight=1)
         options_card.columnconfigure(1, weight=0)
 
-        ttk.Label(options_card, text='Conversion options', style='Heading.TLabel').grid(
+        ttk.Label(options_card, text='Configuration', style='Heading.TLabel').grid(
             row=0, column=0, sticky='w', pady=(0, 10)
         )
 
