@@ -632,6 +632,7 @@ class ConverterGUI:
         )
         self.remove_toolchange_check.grid(row=2, column=0, sticky='w', pady=(5, 0))
 
+        """
         zero_plane_frame = ttk.Frame(options_card, style='Card.TFrame')
         zero_plane_frame.grid(row=3, column=0, pady=(12, 0), sticky='w')
         ttk.Label(zero_plane_frame, text='Zero plane', style='Card.TLabel').grid(row=0, column=0, sticky='w')
@@ -643,7 +644,7 @@ class ConverterGUI:
             width=10
         )
         self.zero_plane_menu.grid(row=0, column=1, padx=(10, 0))
-
+        """
         # Actions and status
         action_frame = ttk.Frame(self.main_frame, style='TFrame', padding=(0, 15, 0, 0))
         action_frame.grid(row=3, column=0, sticky='ew')
@@ -816,19 +817,19 @@ class ConverterGUI:
 
         ttk.Label(card, text='Mister Port', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w')
 
-        ttk.Label(card, text='Mist (M7/M9)', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(card, text='Port', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
         self.mist_output_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
         ttk.Entry(card, textvariable=self.mist_output_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
         ttk.Label(
             card,
-            text='WinCNC mister port used with M11C<port> (on) / M12C<port> (off).',
+            text='WinCNC mister port to be used with M11/M12.',
             style='Card.TLabel',
             wraplength=360,
         ).grid(row=2, column=0, columnspan=2, sticky='w')
 
         ttk.Label(
             card,
-            text='Leave the port blank to disable mist conversion. Configure it when your machine wiring is known.',
+            text='Leave the port blank to disable mist conversion.',
             style='Card.TLabel',
             wraplength=360,
         ).grid(row=3, column=0, columnspan=2, sticky='w', pady=(12, 0))
@@ -915,12 +916,7 @@ class ConverterGUI:
         ttk.Entry(card, textvariable=self.output_value_var).grid(
             row=5, column=1, columnspan=2, padx=(10, 0), pady=(8, 0), sticky='ew'
         )
-        ttk.Label(
-            card,
-            text='Example: prefix of "SS23_" makes SS23_part.tap; suffix of "_WIN" makes part_WIN.tap.',
-            style='Card.TLabel',
-            wraplength=360,
-        ).grid(row=6, column=0, columnspan=3, sticky='w', pady=(4, 0))
+       
 
         button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
         button_frame.grid(row=1, column=0, sticky='ew')
