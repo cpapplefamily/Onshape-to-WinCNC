@@ -18,8 +18,9 @@ when the conversion succeeds or if an error occurs.
   containing arc parameters because arcs are not modal in WinCNC.
 * Optionally removes tool changes (``M6``) for machines without
   automatic tool changers.
-* Optionally removes coolant codes (``M7``, ``M8``, ``M9``) if they are
-  not relevant for the machine.
+* Optionally removes mist coolant codes (``M7`` / ``M9``) if they are
+  not relevant for the machine, or rewrites them to WinCNC's
+  ``M11C<port>`` / ``M12C<port>`` mister control when configured.
 * Checks for likely Z-zero / Position Type mistakes, with behavior
   dependent on the selected Zero Plane ("Top" or "Bottom").
 """
@@ -58,8 +59,7 @@ class MachineSettings:
     """Represents user-editable ShopSabre integration parameters."""
 
     tool_change_command: str = 'TC'
-    mist_output: Optional[int] = 1
-    flood_output: Optional[int] = 2
+    mist_port: Optional[int] = None
     output_directory: Optional[str] = None
     output_name_mode: str = 'prefix'
     output_name_value: str = 'SS23_'
@@ -78,8 +78,7 @@ class MachineSettings:
     def load(cls) -> 'MachineSettings':
         defaults = {
             'tool_change_command': (os.environ.get('SHOP_SABRE_TOOL_CHANGE_CMD', 'TC').strip().upper() or 'TC'),
-            'mist_output': _env_int('SHOP_SABRE_MIST_OUTPUT', 1),
-            'flood_output': _env_int('SHOP_SABRE_FLOOD_OUTPUT', 2),
+            'mist_port': _env_int('SHOP_SABRE_MIST_PORT', _env_int('SHOP_SABRE_MIST_OUTPUT', None)),
             'output_directory': None,
             'output_name_mode': 'prefix',
             'output_name_value': 'SS23_',
@@ -92,8 +91,10 @@ class MachineSettings:
                 data = {}
         tool = str(data.get('tool_change_command', defaults['tool_change_command'])).strip().upper()
         tool = tool or defaults['tool_change_command']
-        mist = cls._coerce_channel(data.get('mist_output'), defaults['mist_output'])
-        flood = cls._coerce_channel(data.get('flood_output'), defaults['flood_output'])
+        mist = cls._coerce_channel(
+            data.get('mist_port', data.get('mist_output')),
+            defaults['mist_port']
+        )
         raw_directory = data.get('output_directory')
         directory = str(raw_directory).strip() if raw_directory else ''
         directory = os.path.abspath(os.path.expanduser(directory)) if directory else None
@@ -102,8 +103,7 @@ class MachineSettings:
         name_value = str(data.get('output_name_value', defaults['output_name_value']))
         return cls(
             tool_change_command=tool,
-            mist_output=mist,
-            flood_output=flood,
+            mist_port=mist,
             output_directory=directory,
             output_name_mode=mode,
             output_name_value=name_value,
@@ -174,7 +174,7 @@ def process_arc_line(line: str, last_g: str):
     return line, last_g
 
 
-def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: bool):
+def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: bool, mist_port: Optional[int]):
     """Filter out tokens that WinCNC does not support or should be handled separately.
 
     Removes program delimiters (%, O#####), line numbers (N####), tool
@@ -200,8 +200,17 @@ def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: b
             continue
         if up.startswith('H') and up[1:].replace('.', '').isdigit():
             continue
-        # Optionally remove coolant commands
-        if remove_coolant and up in ('M7', 'M8', 'M9'):
+        # Handle coolant commands (mist only)
+        if up in ('M7', 'M9'):
+            if remove_coolant:
+                continue
+            if mist_port is None:
+                raise ValueError('Mist commands require a configured mister port.')
+            converted = f"M11C{mist_port}" if up == 'M7' else f"M12C{mist_port}"
+            result.append(converted)
+            continue
+        # Flood (M8) is not supported; drop it.
+        if up == 'M8':
             continue
         # Optionally remove tool change commands
         if remove_toolchange and up == 'M6':
@@ -245,7 +254,12 @@ def get_g_code(token: str):
     return None
 
 
-def convert_lines(lines, remove_coolant: bool = True, remove_toolchange: bool = True):
+def convert_lines(
+    lines,
+    remove_coolant: bool = True,
+    remove_toolchange: bool = True,
+    mist_port: Optional[int] = None
+):
     """Convert a list of G-code lines into WinCNC-friendly format.
 
     Parameters
@@ -253,9 +267,12 @@ def convert_lines(lines, remove_coolant: bool = True, remove_toolchange: bool = 
     lines : list[str]
         Raw G-code lines.
     remove_coolant : bool
-        If True, remove M7/M8/M9 commands.
+        If True, remove M7/M9 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
+    mist_port : Optional[int]
+        Mister port number used to translate M7/M9 into M11C/M12C when
+        coolant commands are kept.
     """
     converted = []
     last_motion = None
@@ -268,7 +285,7 @@ def convert_lines(lines, remove_coolant: bool = True, remove_toolchange: bool = 
             continue
         for sm_line in split_spindle_speed_and_m(line.strip()):
             tokens = sm_line.split()
-            tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_toolchange)
+            tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_toolchange, mist_port)
             if not tokens:
                 continue
             grouped = split_by_multiple_commands(tokens)
@@ -403,7 +420,8 @@ def convert_file(
     input_path: str,
     output_path: str,
     remove_coolant: bool = True,
-    remove_toolchange: bool = True
+    remove_toolchange: bool = True,
+    mist_port: Optional[int] = None
 ) -> None:
     """Convert the input G-code file and write to the given output path.
 
@@ -414,9 +432,12 @@ def convert_file(
     output_path : str
         Output G-code file path.
     remove_coolant : bool
-        If True, remove M7/M8/M9 commands.
+        If True, remove M7/M9 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
+    mist_port : Optional[int]
+        Mister port number used to translate M7/M9 into M11C/M12C when
+        coolant commands are kept.
 
     Raises
     ------
@@ -425,7 +446,12 @@ def convert_file(
     """
     with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in:
         lines = f_in.readlines()
-    converted = convert_lines(lines, remove_coolant=remove_coolant, remove_toolchange=remove_toolchange)
+    converted = convert_lines(
+        lines,
+        remove_coolant=remove_coolant,
+        remove_toolchange=remove_toolchange,
+        mist_port=mist_port
+    )
     with open(output_path, 'w', encoding='utf-8') as f_out:
         for cl in converted:
             f_out.write(cl.rstrip() + '\n')
@@ -520,7 +546,7 @@ class ConverterGUI:
 
         self.remove_coolant_check = ttk.Checkbutton(
             options_card,
-            text='Remove coolant commands (M7/M8/M9)',
+            text='Remove mist commands (M7/M9)',
             variable=self.remove_coolant_var
         )
         self.remove_coolant_check.grid(row=1, column=0, sticky='w')
@@ -636,6 +662,19 @@ class ConverterGUI:
             with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in:
                 in_lines = f_in.readlines()
 
+            contains_mist = any(
+                re.search(r'\bM7\b', ln, re.IGNORECASE) or re.search(r'\bM9\b', ln, re.IGNORECASE)
+                for ln in in_lines
+            )
+            if contains_mist and not self.remove_coolant_var.get() and self.settings.mist_port is None:
+                self.status_var.set('Conversion aborted: mist port not set.')
+                messagebox.showerror(
+                    'Mister Port Required',
+                    'Mist commands were detected but no mister port is configured.\n'
+                    'Set your mister port in Machine Settings before converting.'
+                )
+                return
+
             # Detect potential SETUP -> POSITION TYPE / Z-zero issues BEFORE conversion.
             if zero_plane != "Ignore" and detect_z_zero_issue(in_lines, zero_plane=zero_plane):
                 self.status_var.set('Conversion aborted due to Z-zero / POSITION TYPE error.')
@@ -668,7 +707,8 @@ class ConverterGUI:
                 input_path,
                 output_path,
                 remove_coolant=self.remove_coolant_var.get(),
-                remove_toolchange=self.remove_toolchange_var.get()
+                remove_toolchange=self.remove_toolchange_var.get(),
+                mist_port=self.settings.mist_port
             )
 
             self.status_var.set(f'Conversion complete: {output_path}')
@@ -711,34 +751,24 @@ class ConverterGUI:
             wraplength=360,
         ).grid(row=2, column=0, columnspan=2, sticky='w', pady=(4, 0))
 
-        ttk.Label(card, text='Coolant Output Channels', style='Heading.TLabel').grid(row=3, column=0, columnspan=2, sticky='w', pady=(20, 0))
+        ttk.Label(card, text='Mister Port', style='Heading.TLabel').grid(row=3, column=0, columnspan=2, sticky='w', pady=(20, 0))
 
-        ttk.Label(card, text='Mist (M7)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
-        self.mist_output_var = tk.StringVar(value='' if self.settings.mist_output is None else str(self.settings.mist_output))
+        ttk.Label(card, text='Mist (M7/M9)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
+        self.mist_output_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
         ttk.Entry(card, textvariable=self.mist_output_var).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
         ttk.Label(
             card,
-            text='Positive WinCNC SO channel that should turn on when M7 runs.',
+            text='WinCNC mister port used with M11C<port> (on) / M12C<port> (off).',
             style='Card.TLabel',
             wraplength=360,
         ).grid(row=5, column=0, columnspan=2, sticky='w')
 
-        ttk.Label(card, text='Flood (M8)', style='Card.TLabel').grid(row=6, column=0, sticky='w', pady=(8, 0))
-        self.flood_output_var = tk.StringVar(value='' if self.settings.flood_output is None else str(self.settings.flood_output))
-        ttk.Entry(card, textvariable=self.flood_output_var).grid(row=6, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
         ttk.Label(
             card,
-            text='Positive WinCNC SO channel that should turn on when M8 runs.',
+            text='Leave the port blank to disable mist conversion. Configure it when your machine wiring is known.',
             style='Card.TLabel',
             wraplength=360,
-        ).grid(row=7, column=0, columnspan=2, sticky='w')
-
-        ttk.Label(
-            card,
-            text='Leave coolant outputs blank to disable those commands. Channels must match the SO,<n>,<state> wiring on your machine.',
-            style='Card.TLabel',
-            wraplength=360,
-        ).grid(row=8, column=0, columnspan=2, sticky='w', pady=(12, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky='w', pady=(12, 0))
 
         button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
         button_frame.grid(row=1, column=0, sticky='ew')
@@ -900,15 +930,13 @@ class ConverterGUI:
             messagebox.showerror('Invalid Value', 'Tool change command cannot be empty.')
             return
         try:
-            mist = self._parse_channel_value(self.mist_output_var.get(), 'Mist output')
-            flood = self._parse_channel_value(self.flood_output_var.get(), 'Flood output')
+            mist = self._parse_channel_value(self.mist_output_var.get(), 'Mist port')
         except ValueError as exc:
             messagebox.showerror('Invalid Value', str(exc))
             return
 
         self.settings.tool_change_command = tool_cmd
-        self.settings.mist_output = mist
-        self.settings.flood_output = flood
+        self.settings.mist_port = mist
         try:
             self.settings.save()
         except OSError as exc:
