@@ -356,6 +356,8 @@ def detect_z_zero_issue(lines, zero_plane: str = "Top") -> bool:
       we expect Z to stay at or above 0 (Z >= 0). If any negative Z is
       seen, we flag it as an issue (cutting below the part bottom / table).
 
+    * "Ignore": Disables Z-zero detection entirely.
+
     Args:
         lines: List of strings representing the input G-code file.
         zero_plane: "Top" or "Bottom".
@@ -364,6 +366,9 @@ def detect_z_zero_issue(lines, zero_plane: str = "Top") -> bool:
         True if a potential Z-zero problem is detected, False otherwise.
     """
     zero_plane = (zero_plane or "Top").strip().title()
+
+    if zero_plane == "Ignore":
+        return False
     spindle_on = False
     saw_negative_z = False
 
@@ -533,7 +538,7 @@ class ConverterGUI:
         self.zero_plane_menu = ttk.Combobox(
             zero_plane_frame,
             textvariable=self.zero_plane_var,
-            values=['Top', 'Bottom'],
+            values=['Top', 'Bottom', 'Ignore'],
             state='readonly',
             width=10
         )
@@ -632,7 +637,7 @@ class ConverterGUI:
                 in_lines = f_in.readlines()
 
             # Detect potential SETUP -> POSITION TYPE / Z-zero issues BEFORE conversion.
-            if detect_z_zero_issue(in_lines, zero_plane=zero_plane):
+            if zero_plane != "Ignore" and detect_z_zero_issue(in_lines, zero_plane=zero_plane):
                 self.status_var.set('Conversion aborted due to Z-zero / POSITION TYPE error.')
                 if zero_plane == "Top":
                     msg = (
