@@ -539,7 +539,6 @@ class ConverterGUI:
         self.root.title('Onshape to WinCNC Converter')
         self.root.configure(bg='#f4f6fb')
         self.settings = SETTINGS
-        self.settings_window: Optional[tk.Toplevel] = None
         self.output_settings_window: Optional[tk.Toplevel] = None
 
         style = ttk.Style()
@@ -617,29 +616,50 @@ class ConverterGUI:
         ttk.Label(options_card, text='Conversion options', style='Heading.TLabel').grid(
             row=0, column=0, sticky='w', pady=(0, 10)
         )
-        ttk.Button(
-            options_card,
-            text='Machine Settings…',
-            command=self.open_customize_dialog,
-        ).grid(row=0, column=1, sticky='e', pady=(0, 10))
 
         self.remove_coolant_var = tk.BooleanVar(value=True)
         self.remove_toolchange_var = tk.BooleanVar(value=True)
         self.zero_plane_var = tk.StringVar(value="Top")
+        self.mist_port_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
+
+        ttk.Label(options_card, text='Mister Port (optional)', style='Card.TLabel').grid(
+            row=1, column=0, sticky='w'
+        )
+
+        mist_frame = ttk.Frame(options_card, style='Card.TFrame')
+        mist_frame.grid(row=2, column=0, sticky='ew', pady=(6, 0))
+        mist_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(mist_frame, text='Port', style='Card.TLabel').grid(row=0, column=0, sticky='w')
+        ttk.Entry(mist_frame, textvariable=self.mist_port_var, width=12).grid(
+            row=0, column=1, padx=(10, 0), sticky='w'
+        )
+        ttk.Button(
+            mist_frame,
+            text='Save Mister Port',
+            command=self._save_mist_port_inline,
+        ).grid(row=0, column=2, padx=(10, 0))
+
+        ttk.Label(
+            options_card,
+            text='Leave blank to disable mist conversion. Used when keeping M7/M9 commands.',
+            style='Card.TLabel',
+            wraplength=560,
+        ).grid(row=3, column=0, sticky='w', pady=(6, 0))
 
         self.remove_coolant_check = ttk.Checkbutton(
             options_card,
             text='Remove mist commands (M7/M9)',
             variable=self.remove_coolant_var
         )
-        self.remove_coolant_check.grid(row=1, column=0, sticky='w')
+        self.remove_coolant_check.grid(row=4, column=0, sticky='w', pady=(10, 0))
 
         self.remove_toolchange_check = ttk.Checkbutton(
             options_card,
             text='Remove tool change commands (M6)',
             variable=self.remove_toolchange_var
         )
-        self.remove_toolchange_check.grid(row=2, column=0, sticky='w', pady=(5, 0))
+        self.remove_toolchange_check.grid(row=5, column=0, sticky='w', pady=(5, 0))
 
         """
         zero_plane_frame = ttk.Frame(options_card, style='Card.TFrame')
@@ -739,12 +759,17 @@ class ConverterGUI:
                 re.search(r'\bM7\b', ln, re.IGNORECASE) or re.search(r'\bM9\b', ln, re.IGNORECASE)
                 for ln in in_lines
             )
-            if contains_mist and not self.remove_coolant_var.get() and self.settings.mist_port is None:
+            mist_port, valid = self._update_mist_port_from_entry(persist=True)
+            if not valid:
+                self.status_var.set('Conversion aborted: mist port not set correctly.')
+                return
+
+            if contains_mist and not self.remove_coolant_var.get() and mist_port is None:
                 self.status_var.set('Conversion aborted: mist port not set.')
                 messagebox.showerror(
                     'Mister Port Required',
                     'Mist commands were detected but no mister port is configured.\n'
-                    'Set your mister port in Machine Settings before converting.'
+                    'Set your mister port in Conversion options before converting.'
                 )
                 return
 
@@ -781,7 +806,7 @@ class ConverterGUI:
                 output_path,
                 remove_coolant=self.remove_coolant_var.get(),
                 remove_toolchange=self.remove_toolchange_var.get(),
-                mist_port=self.settings.mist_port
+                mist_port=mist_port
             )
 
             self.status_var.set(f'Conversion complete: {output_path}')
@@ -789,70 +814,6 @@ class ConverterGUI:
         except Exception as e:
             self.status_var.set('Conversion failed.')
             messagebox.showerror('Error', f'An error occurred during conversion:\n{e}')
-
-    def open_customize_dialog(self) -> None:
-        """Open the customization dialog for coolant/tool change parameters."""
-
-        if self.settings_window and tk.Toplevel.winfo_exists(self.settings_window):
-            self.settings_window.lift()
-            self.settings_window.focus_set()
-            return
-
-        win = tk.Toplevel(self.root)
-        win.title('Customize Machine Settings')
-        win.configure(bg='#f4f6fb')
-        win.resizable(False, False)
-        win.transient(self.root)
-        self.settings_window = win
-        self.settings_window.protocol('WM_DELETE_WINDOW', self._close_settings_window)
-
-        container = ttk.Frame(win, padding=20)
-        container.grid(row=0, column=0, sticky='nsew')
-
-        card = ttk.Frame(container, style='Card.TFrame', padding=15)
-        card.grid(row=0, column=0, sticky='ew')
-        card.columnconfigure(1, weight=1)
-
-        ttk.Label(card, text='Mister Port', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w')
-
-        ttk.Label(card, text='Port', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
-        self.mist_output_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
-        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
-        ttk.Label(
-            card,
-            text='WinCNC mister port to be used with M11/M12.',
-            style='Card.TLabel',
-            wraplength=360,
-        ).grid(row=2, column=0, columnspan=2, sticky='w')
-
-        ttk.Label(
-            card,
-            text='Leave the port blank to disable mist conversion.',
-            style='Card.TLabel',
-            wraplength=360,
-        ).grid(row=3, column=0, columnspan=2, sticky='w', pady=(12, 0))
-
-        button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
-        button_frame.grid(row=1, column=0, sticky='ew')
-        button_frame.columnconfigure(0, weight=1)
-
-        ttk.Button(
-            button_frame,
-            text='Save Settings',
-            style='Accent.TButton',
-            command=self._save_settings_from_dialog
-        ).grid(row=0, column=0, sticky='ew')
-
-        ttk.Button(
-            button_frame,
-            text='Cancel',
-            command=self._close_settings_window
-        ).grid(row=1, column=0, sticky='ew', pady=(10, 0))
-
-    def _close_settings_window(self) -> None:
-        if self.settings_window:
-            self.settings_window.destroy()
-            self.settings_window = None
 
     def open_output_settings_dialog(self) -> None:
         """Open dialog for configuring output directory and file naming."""
@@ -981,22 +942,36 @@ class ConverterGUI:
             raise ValueError(f'{label} must be greater than zero.')
         return parsed
 
-    def _save_settings_from_dialog(self) -> None:
+    def _update_mist_port_from_entry(self, *, persist: bool = False, show_success: bool = False) -> tuple[Optional[int], bool]:
+        """Validate and optionally persist the mister port entry."""
+
         try:
-            mist = self._parse_channel_value(self.mist_output_var.get(), 'Mist port')
+            mist = self._parse_channel_value(self.mist_port_var.get(), 'Mist port')
         except ValueError as exc:
             messagebox.showerror('Invalid Value', str(exc))
-            return
+            return None, False
 
         self.settings.mist_port = mist
-        try:
-            self.settings.save()
-        except OSError as exc:
-            messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
-            return
+        if persist:
+            try:
+                self.settings.save()
+            except OSError as exc:
+                messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
+                return mist, False
 
-        messagebox.showinfo('Settings Saved', 'Machine settings saved successfully.')
-        self._close_settings_window()
+        if show_success:
+            messagebox.showinfo('Settings Saved', 'Mister port saved successfully.')
+
+        return mist, True
+
+    def _save_mist_port_inline(self) -> None:
+        """Persist mister port edits from the main window."""
+
+        mist_port, valid = self._update_mist_port_from_entry(persist=True, show_success=True)
+        if valid:
+            self.status_var.set(
+                'Mister port disabled.' if mist_port is None else f'Mister port saved: {mist_port}'
+            )
 
 
 def main() -> None:

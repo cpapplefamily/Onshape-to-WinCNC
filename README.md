@@ -15,7 +15,7 @@ This script takes G-code exported from Onshape CAM Studio and rewrites it into a
 
 ### ShopSabre mister handling
 
-Configure the mister port that should be toggled by mist commands in **Customize → Machine Settings…**. When mist is enabled for conversion, `M7` becomes `M11C<port>` (on) and `M9` becomes `M12C<port>` (off) using the port you specify.
+Configure the mister port that should be toggled by mist commands in the **Conversion options** section of the main window. When mist is enabled for conversion, `M7` becomes `M11C<port>` (on) and `M9` becomes `M12C<port>` (off) using the port you specify.
 
 The mister port setting is stored in your user profile so it persists between runs. Any environment variable you set is still honored the first time you launch the tool (before you save your own values).
 
