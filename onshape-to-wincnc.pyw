@@ -10,8 +10,8 @@ derived output file name (prefixed with ``SS23_``), and provides feedback
 during the conversion process.  A confirmation dialog alerts the user
 when the conversion succeeds or if an error occurs.
 
-* Removes parentheses and semicolon comments because WinCNC uses
-  square brackets for comments.
+* Converts parentheses comments to WinCNC-friendly square brackets and
+  removes semicolon comments.
 * Splits spindle speed (``S``) and spindle start/stop commands
   (``M3``/``M4``/``M5``) onto separate lines.
 * Inserts the last arc command (``G2``/``G3``) on subsequent lines
@@ -110,13 +110,49 @@ class MachineSettings:
 
 SETTINGS = MachineSettings.load()
 
-def remove_parentheses_comments(line: str) -> str:
-    """Strip any text enclosed in parentheses from the line."""
-    while '(' in line and ')' in line and line.index('(') < line.index(')'):
-        start = line.index('(')
-        end = line.index(')', start) + 1
-        line = line[:start] + line[end:]
-    return line
+def parentheses_to_bracket_lines(line: str) -> tuple[str, list[str]]:
+    """Convert inline parentheses comments into bracket-only lines.
+
+    The returned content line excludes parentheses segments. Each
+    extracted comment is converted to a standalone ``[comment]`` line to
+    satisfy WinCNC's preference for bracketed comments on their own
+    lines. Nested parentheses are supported; unmatched parentheses leave
+    the remainder untouched to avoid dropping user data.
+    """
+
+    content_chars = []
+    bracket_comments: list[str] = []
+    i = 0
+    length = len(line)
+    while i < length:
+        char = line[i]
+        if char == '(':
+            i += 1
+            depth = 1
+            comment_start = i
+            while i < length and depth > 0:
+                if line[i] == '(':
+                    depth += 1
+                elif line[i] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        comment = line[comment_start:i].strip()
+                        if comment:
+                            bracket_comments.append(f'[{comment}]')
+                        break
+                i += 1
+            if depth == 0:
+                i += 1  # Skip the closing parenthesis
+            else:
+                # Unmatched parentheses; keep the raw remainder
+                content_chars.append('(')
+                content_chars.append(line[comment_start:])
+                break
+        else:
+            content_chars.append(char)
+            i += 1
+    content_line = ''.join(content_chars).strip()
+    return content_line, bracket_comments
 
 
 def remove_semicolon_comments(line: str) -> str:
@@ -274,11 +310,11 @@ def convert_lines(
     for original_line in lines:
         line = original_line.rstrip('\n')
         line = remove_semicolon_comments(line)
-        line = remove_parentheses_comments(line)
-        if not line.strip():
+        content_line, bracket_comments = parentheses_to_bracket_lines(line)
+        if not content_line.strip() and not bracket_comments:
             converted.append('')
             continue
-        for sm_line in split_spindle_speed_and_m(line.strip()):
+        for sm_line in split_spindle_speed_and_m(content_line.strip()):
             tokens = sm_line.split()
             tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_toolchange, mist_port)
             if not tokens:
@@ -306,6 +342,7 @@ def convert_lines(
                         elif last_motion in ('G0', 'G1') and has_lin:
                             group.insert(0, last_motion)
                 converted.append(' '.join(group))
+        converted.extend(bracket_comments)
     # After processing all lines, perform post-processing on the converted list.
     # 1. Handle placement of G49 (tool length cancel) commands:
     #    - If there is a spindle stop (M5), remove any G49 before the first M5
