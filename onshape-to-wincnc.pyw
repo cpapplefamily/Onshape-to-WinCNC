@@ -58,7 +58,6 @@ def _env_int(name: str, default: Optional[int]) -> Optional[int]:
 class MachineSettings:
     """Represents user-editable ShopSabre integration parameters."""
 
-    tool_change_command: str = 'TC'
     mist_port: Optional[int] = None
     output_directory: Optional[str] = None
     output_name_mode: str = 'prefix'
@@ -77,7 +76,6 @@ class MachineSettings:
     @classmethod
     def load(cls) -> 'MachineSettings':
         defaults = {
-            'tool_change_command': (os.environ.get('SHOP_SABRE_TOOL_CHANGE_CMD', 'TC').strip().upper() or 'TC'),
             'mist_port': _env_int('SHOP_SABRE_MIST_PORT', _env_int('SHOP_SABRE_MIST_OUTPUT', None)),
             'output_directory': None,
             'output_name_mode': 'prefix',
@@ -89,8 +87,6 @@ class MachineSettings:
                 data = json.loads(SETTINGS_FILE.read_text(encoding='utf-8'))
             except Exception:
                 data = {}
-        tool = str(data.get('tool_change_command', defaults['tool_change_command'])).strip().upper()
-        tool = tool or defaults['tool_change_command']
         mist = cls._coerce_channel(
             data.get('mist_port', data.get('mist_output')),
             defaults['mist_port']
@@ -102,7 +98,6 @@ class MachineSettings:
         mode = mode_raw if mode_raw in ('prefix', 'suffix') else defaults['output_name_mode']
         name_value = str(data.get('output_name_value', defaults['output_name_value']))
         return cls(
-            tool_change_command=tool,
             mist_port=mist,
             output_directory=directory,
             output_name_mode=mode,
@@ -740,35 +735,24 @@ class ConverterGUI:
         card.grid(row=0, column=0, sticky='ew')
         card.columnconfigure(1, weight=1)
 
-        ttk.Label(card, text='Tool Change Command', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w')
-        ttk.Label(card, text='Command', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
-        self.tool_command_var = tk.StringVar(value=self.settings.tool_change_command)
-        ttk.Entry(card, textvariable=self.tool_command_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
-        ttk.Label(
-            card,
-            text="Enter the WinCNC command issued when an M6 is encountered (e.g., 'TC').",
-            style='Card.TLabel',
-            wraplength=360,
-        ).grid(row=2, column=0, columnspan=2, sticky='w', pady=(4, 0))
+        ttk.Label(card, text='Mister Port', style='Heading.TLabel').grid(row=0, column=0, columnspan=2, sticky='w')
 
-        ttk.Label(card, text='Mister Port', style='Heading.TLabel').grid(row=3, column=0, columnspan=2, sticky='w', pady=(20, 0))
-
-        ttk.Label(card, text='Mist (M7/M9)', style='Card.TLabel').grid(row=4, column=0, sticky='w', pady=(8, 0))
+        ttk.Label(card, text='Mist (M7/M9)', style='Card.TLabel').grid(row=1, column=0, sticky='w', pady=(8, 0))
         self.mist_output_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
-        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=4, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
+        ttk.Entry(card, textvariable=self.mist_output_var).grid(row=1, column=1, padx=(10, 0), pady=(8, 0), sticky='ew')
         ttk.Label(
             card,
             text='WinCNC mister port used with M11C<port> (on) / M12C<port> (off).',
             style='Card.TLabel',
             wraplength=360,
-        ).grid(row=5, column=0, columnspan=2, sticky='w')
+        ).grid(row=2, column=0, columnspan=2, sticky='w')
 
         ttk.Label(
             card,
             text='Leave the port blank to disable mist conversion. Configure it when your machine wiring is known.',
             style='Card.TLabel',
             wraplength=360,
-        ).grid(row=6, column=0, columnspan=2, sticky='w', pady=(12, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky='w', pady=(12, 0))
 
         button_frame = ttk.Frame(container, padding=(0, 15, 0, 0))
         button_frame.grid(row=1, column=0, sticky='ew')
@@ -925,17 +909,12 @@ class ConverterGUI:
         return parsed
 
     def _save_settings_from_dialog(self) -> None:
-        tool_cmd = self.tool_command_var.get().strip().upper()
-        if not tool_cmd:
-            messagebox.showerror('Invalid Value', 'Tool change command cannot be empty.')
-            return
         try:
             mist = self._parse_channel_value(self.mist_output_var.get(), 'Mist port')
         except ValueError as exc:
             messagebox.showerror('Invalid Value', str(exc))
             return
 
-        self.settings.tool_change_command = tool_cmd
         self.settings.mist_port = mist
         try:
             self.settings.save()
