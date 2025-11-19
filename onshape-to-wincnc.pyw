@@ -57,6 +57,7 @@ class MachineSettings:
     """Represents user-editable ShopSabre integration parameters."""
 
     mist_port: Optional[int] = None
+    flood_port: Optional[int] = None
     output_directory: Optional[str] = None
     output_name_mode: str = 'prefix'
     output_name_value: str = 'SS23_'
@@ -75,6 +76,7 @@ class MachineSettings:
     def load(cls) -> 'MachineSettings':
         defaults = {
             'mist_port': _env_int('SHOP_SABRE_MIST_PORT', _env_int('SHOP_SABRE_MIST_OUTPUT', None)),
+            'flood_port': _env_int('SHOP_SABRE_FLOOD_PORT', None),
             'output_directory': None,
             'output_name_mode': 'prefix',
             'output_name_value': 'SS23_',
@@ -89,6 +91,7 @@ class MachineSettings:
             data.get('mist_port', data.get('mist_output')),
             defaults['mist_port']
         )
+        flood = cls._coerce_channel(data.get('flood_port'), defaults['flood_port'])
         raw_directory = data.get('output_directory')
         directory = str(raw_directory).strip() if raw_directory else ''
         directory = os.path.abspath(os.path.expanduser(directory)) if directory else None
@@ -97,6 +100,7 @@ class MachineSettings:
         name_value = str(data.get('output_name_value', defaults['output_name_value']))
         return cls(
             mist_port=mist,
+            flood_port=flood,
             output_directory=directory,
             output_name_mode=mode,
             output_name_value=name_value,
@@ -205,16 +209,17 @@ def process_arc_line(line: str, last_g: str):
 
 def remove_unsupported_tokens(
     tokens,
-    remove_coolant: bool,
-    remove_flood: bool,
     remove_toolchange: bool,
-    mist_port: Optional[int]
+    mist_port: Optional[int],
+    flood_port: Optional[int]
 ):
     """Filter out tokens that WinCNC does not support or should be handled separately.
 
     Removes program delimiters (%, O#####), line numbers (N####), tool
-    length offsets (H#). Optionally removes mist coolant codes (M7/M9),
-    flood coolant (M8) and tool change commands (M6). Omits plane selection, cutter
+    length offsets (H#). Converts mist coolant codes (M7/M9) and flood
+    coolant (M8/M9) to M11C/M12C pairs when their ports are configured;
+    otherwise those commands are removed. Tool change commands (M6) can be
+    stripped when requested. Omits plane selection, cutter
     compensation and canned cycle cancel codes (G17, G40, G80). G49
     (tool length cancel) is retained and handled in a post-processing
     step. Tool selection (T#) words are preserved when tool changes are
@@ -240,19 +245,24 @@ def remove_unsupported_tokens(
         if up.startswith('H') and up[1:].replace('.', '').isdigit():
             continue
         # Handle coolant commands (mist only)
-        if up in ('M7', 'M9'):
-            if remove_coolant:
-                continue
+        if up == 'M7':
             if mist_port is None:
-                raise ValueError('Mist commands require a configured mister port.')
-            converted = f"M11C{mist_port}" if up == 'M7' else f"M12C{mist_port}"
-            result.append(converted)
+                continue
+            result.append(f"M11C{mist_port}")
+            continue
+        if up == 'M9':
+            if mist_port is None and flood_port is None:
+                continue
+            if mist_port is not None:
+                result.append(f"M12C{mist_port}")
+            if flood_port is not None:
+                result.append(f"M12C{flood_port}")
             continue
         # Optionally handle flood coolant (M8)
         if up == 'M8':
-            if remove_flood:
+            if flood_port is None:
                 continue
-            result.append(tok)
+            result.append(f"M11C{flood_port}")
             continue
         # Optionally remove tool change commands
         if remove_toolchange and up == 'M6':
@@ -335,10 +345,9 @@ def get_g_code(token: str):
 
 def convert_lines(
     lines,
-    remove_coolant: bool = True,
-    remove_flood: bool = True,
     remove_toolchange: bool = True,
-    mist_port: Optional[int] = None
+    mist_port: Optional[int] = None,
+    flood_port: Optional[int] = None
 ):
     """Convert a list of G-code lines into WinCNC-friendly format.
 
@@ -346,15 +355,12 @@ def convert_lines(
     ----------
     lines : list[str]
         Raw G-code lines.
-    remove_coolant : bool
-        If True, remove M7/M9 commands.
-    remove_flood : bool
-        If True, remove M8 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
     mist_port : Optional[int]
-        Mister port number used to translate M7/M9 into M11C/M12C when
-        coolant commands are kept.
+        Mister port number used to translate M7/M9 into M11C/M12C when set.
+    flood_port : Optional[int]
+        Flood port number used to translate M8/M9 into M11C/M12C when set.
     """
     converted = []
     last_motion = None
@@ -367,7 +373,7 @@ def convert_lines(
             continue
         for sm_line in split_spindle_speed_and_m(content_line.strip()):
             tokens = sm_line.split()
-            tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_flood, remove_toolchange, mist_port)
+            tokens = remove_unsupported_tokens(tokens, remove_toolchange, mist_port, flood_port)
             if not tokens:
                 continue
             tokens = normalize_tool_change(tokens)
@@ -447,10 +453,9 @@ def convert_lines(
 def convert_file(
     input_path: str,
     output_path: str,
-    remove_coolant: bool = True,
-    remove_flood: bool = True,
     remove_toolchange: bool = True,
-    mist_port: Optional[int] = None
+    mist_port: Optional[int] = None,
+    flood_port: Optional[int] = None
 ) -> None:
     """Convert the input G-code file and write to the given output path.
 
@@ -460,15 +465,12 @@ def convert_file(
         Input G-code file path.
     output_path : str
         Output G-code file path.
-    remove_coolant : bool
-        If True, remove M7/M9 commands.
-    remove_flood : bool
-        If True, remove M8 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
     mist_port : Optional[int]
-        Mister port number used to translate M7/M9 into M11C/M12C when
-        coolant commands are kept.
+        Mister port number used to translate M7/M9 into M11C/M12C when set.
+    flood_port : Optional[int]
+        Flood port number used to translate M8/M9 into M11C/M12C when set.
 
     Raises
     ------
@@ -479,10 +481,9 @@ def convert_file(
         lines = f_in.readlines()
     converted = convert_lines(
         lines,
-        remove_coolant=remove_coolant,
-        remove_flood=remove_flood,
         remove_toolchange=remove_toolchange,
-        mist_port=mist_port
+        mist_port=mist_port,
+        flood_port=flood_port
     )
     with open(output_path, 'w', encoding='utf-8') as f_out:
         for cl in converted:
@@ -575,10 +576,9 @@ class ConverterGUI:
             row=0, column=0, sticky='w', pady=(0, 10)
         )
 
-        self.remove_coolant_var = tk.BooleanVar(value=True)
-        self.remove_flood_var = tk.BooleanVar(value=True)
         self.remove_toolchange_var = tk.BooleanVar(value=True)
         self.mist_port_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
+        self.flood_port_var = tk.StringVar(value='' if self.settings.flood_port is None else str(self.settings.flood_port))
 
         ttk.Label(options_card, text='Mister Port (optional)', style='Card.TLabel').grid(
             row=1, column=0, sticky='w'
@@ -605,26 +605,37 @@ class ConverterGUI:
             wraplength=560,
         ).grid(row=3, column=0, sticky='w', pady=(6, 0))
 
-        self.remove_coolant_check = ttk.Checkbutton(
-            options_card,
-            text='Remove mist commands (M7/M9)',
-            variable=self.remove_coolant_var
+        ttk.Label(options_card, text='Flood Port (optional)', style='Card.TLabel').grid(
+            row=4, column=0, sticky='w', pady=(12, 0)
         )
-        self.remove_coolant_check.grid(row=4, column=0, sticky='w', pady=(10, 0))
 
-        self.remove_flood_check = ttk.Checkbutton(
-            options_card,
-            text='Remove flood command (M8)',
-            variable=self.remove_flood_var
+        flood_frame = ttk.Frame(options_card, style='Card.TFrame')
+        flood_frame.grid(row=5, column=0, sticky='ew', pady=(6, 0))
+        flood_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(flood_frame, text='Port', style='Card.TLabel').grid(row=0, column=0, sticky='w')
+        ttk.Entry(flood_frame, textvariable=self.flood_port_var, width=12).grid(
+            row=0, column=1, padx=(10, 0), sticky='w'
         )
-        self.remove_flood_check.grid(row=5, column=0, sticky='w', pady=(5, 0))
+        ttk.Button(
+            flood_frame,
+            text='Save Flood Port',
+            command=self._save_flood_port_inline,
+        ).grid(row=0, column=2, padx=(10, 0))
+
+        ttk.Label(
+            options_card,
+            text='Leave blank to disable flood conversion for M8 commands.',
+            style='Card.TLabel',
+            wraplength=560,
+        ).grid(row=6, column=0, sticky='w', pady=(6, 0))
 
         self.remove_toolchange_check = ttk.Checkbutton(
             options_card,
             text='Remove tool change commands (M6)',
             variable=self.remove_toolchange_var
         )
-        self.remove_toolchange_check.grid(row=6, column=0, sticky='w', pady=(5, 0))
+        self.remove_toolchange_check.grid(row=7, column=0, sticky='w', pady=(5, 0))
 
         # Actions and status
         action_frame = ttk.Frame(self.main_frame, style='TFrame', padding=(0, 15, 0, 0))
@@ -702,26 +713,13 @@ class ConverterGUI:
             self.status_var.set('Checking file...')
             self.root.update_idletasks()
 
-            # Read the input file for analysis
-            with open(input_path, 'r', encoding='utf-8', errors='ignore') as f_in:
-                in_lines = f_in.readlines()
-
-            contains_mist = any(
-                re.search(r'\bM7\b', ln, re.IGNORECASE) or re.search(r'\bM9\b', ln, re.IGNORECASE)
-                for ln in in_lines
-            )
             mist_port, valid = self._update_mist_port_from_entry(persist=True)
             if not valid:
                 self.status_var.set('Conversion aborted: mist port not set correctly.')
                 return
-
-            if contains_mist and not self.remove_coolant_var.get() and mist_port is None:
-                self.status_var.set('Conversion aborted: mist port not set.')
-                messagebox.showerror(
-                    'Mister Port Required',
-                    'Mist commands were detected but no mister port is configured.\n'
-                    'Set your mister port in Conversion options before converting.'
-                )
+            flood_port, valid = self._update_flood_port_from_entry(persist=True)
+            if not valid:
+                self.status_var.set('Conversion aborted: flood port not set correctly.')
                 return
 
             # If no issue detected, perform conversion
@@ -730,10 +728,9 @@ class ConverterGUI:
             convert_file(
                 input_path,
                 output_path,
-                remove_coolant=self.remove_coolant_var.get(),
-                remove_flood=self.remove_flood_var.get(),
                 remove_toolchange=self.remove_toolchange_var.get(),
-                mist_port=mist_port
+                mist_port=mist_port,
+                flood_port=flood_port,
             )
 
             self.status_var.set(f'Conversion complete: {output_path}')
@@ -898,6 +895,37 @@ class ConverterGUI:
         if valid:
             self.status_var.set(
                 'Mister port disabled.' if mist_port is None else f'Mister port saved: {mist_port}'
+            )
+
+    def _update_flood_port_from_entry(self, *, persist: bool = False, show_success: bool = False) -> tuple[Optional[int], bool]:
+        """Validate and optionally persist the flood port entry."""
+
+        try:
+            flood = self._parse_channel_value(self.flood_port_var.get(), 'Flood port')
+        except ValueError as exc:
+            messagebox.showerror('Invalid Value', str(exc))
+            return None, False
+
+        self.settings.flood_port = flood
+        if persist:
+            try:
+                self.settings.save()
+            except OSError as exc:
+                messagebox.showerror('Save Failed', f'Unable to save settings:\n{exc}')
+                return flood, False
+
+        if show_success:
+            messagebox.showinfo('Settings Saved', 'Flood port saved successfully.')
+
+        return flood, True
+
+    def _save_flood_port_inline(self) -> None:
+        """Persist flood port edits from the main window."""
+
+        flood_port, valid = self._update_flood_port_from_entry(persist=True, show_success=True)
+        if valid:
+            self.status_var.set(
+                'Flood port disabled.' if flood_port is None else f'Flood port saved: {flood_port}'
             )
 
 
