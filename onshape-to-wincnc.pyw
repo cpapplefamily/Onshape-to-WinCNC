@@ -601,7 +601,7 @@ class ConverterGUI:
         self.mist_port_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
         self.flood_port_var = tk.StringVar(value='' if self.settings.flood_port is None else str(self.settings.flood_port))
 
-        ttk.Label(options_card, text='Mister Port ( to disable)', style='Card.TLabel').grid(
+        ttk.Label(options_card, text='Mister Port (leave blank to disable)', style='Card.TLabel').grid(
             row=1, column=0, sticky='w'
         )
 
