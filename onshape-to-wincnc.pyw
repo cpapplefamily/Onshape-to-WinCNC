@@ -203,12 +203,18 @@ def process_arc_line(line: str, last_g: str):
     return line, last_g
 
 
-def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: bool, mist_port: Optional[int]):
+def remove_unsupported_tokens(
+    tokens,
+    remove_coolant: bool,
+    remove_flood: bool,
+    remove_toolchange: bool,
+    mist_port: Optional[int]
+):
     """Filter out tokens that WinCNC does not support or should be handled separately.
 
     Removes program delimiters (%, O#####), line numbers (N####), tool
-    length offsets (H#). Optionally removes coolant codes (M7/M8/M9) and
-    tool change commands (M6). Omits plane selection, cutter
+    length offsets (H#). Optionally removes mist coolant codes (M7/M9),
+    flood coolant (M8) and tool change commands (M6). Omits plane selection, cutter
     compensation and canned cycle cancel codes (G17, G40, G80). G49
     (tool length cancel) is retained and handled in a post-processing
     step. Tool selection (T#) words are preserved when tool changes are
@@ -242,8 +248,11 @@ def remove_unsupported_tokens(tokens, remove_coolant: bool, remove_toolchange: b
             converted = f"M11C{mist_port}" if up == 'M7' else f"M12C{mist_port}"
             result.append(converted)
             continue
-        # Flood (M8) is not supported; drop it.
+        # Optionally handle flood coolant (M8)
         if up == 'M8':
+            if remove_flood:
+                continue
+            result.append(tok)
             continue
         # Optionally remove tool change commands
         if remove_toolchange and up == 'M6':
@@ -327,6 +336,7 @@ def get_g_code(token: str):
 def convert_lines(
     lines,
     remove_coolant: bool = True,
+    remove_flood: bool = True,
     remove_toolchange: bool = True,
     mist_port: Optional[int] = None
 ):
@@ -338,6 +348,8 @@ def convert_lines(
         Raw G-code lines.
     remove_coolant : bool
         If True, remove M7/M9 commands.
+    remove_flood : bool
+        If True, remove M8 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
     mist_port : Optional[int]
@@ -355,7 +367,7 @@ def convert_lines(
             continue
         for sm_line in split_spindle_speed_and_m(content_line.strip()):
             tokens = sm_line.split()
-            tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_toolchange, mist_port)
+            tokens = remove_unsupported_tokens(tokens, remove_coolant, remove_flood, remove_toolchange, mist_port)
             if not tokens:
                 continue
             tokens = normalize_tool_change(tokens)
@@ -436,6 +448,7 @@ def convert_file(
     input_path: str,
     output_path: str,
     remove_coolant: bool = True,
+    remove_flood: bool = True,
     remove_toolchange: bool = True,
     mist_port: Optional[int] = None
 ) -> None:
@@ -449,6 +462,8 @@ def convert_file(
         Output G-code file path.
     remove_coolant : bool
         If True, remove M7/M9 commands.
+    remove_flood : bool
+        If True, remove M8 commands.
     remove_toolchange : bool
         If True, remove M6 commands.
     mist_port : Optional[int]
@@ -465,6 +480,7 @@ def convert_file(
     converted = convert_lines(
         lines,
         remove_coolant=remove_coolant,
+        remove_flood=remove_flood,
         remove_toolchange=remove_toolchange,
         mist_port=mist_port
     )
@@ -560,6 +576,7 @@ class ConverterGUI:
         )
 
         self.remove_coolant_var = tk.BooleanVar(value=True)
+        self.remove_flood_var = tk.BooleanVar(value=True)
         self.remove_toolchange_var = tk.BooleanVar(value=True)
         self.mist_port_var = tk.StringVar(value='' if self.settings.mist_port is None else str(self.settings.mist_port))
 
@@ -595,12 +612,19 @@ class ConverterGUI:
         )
         self.remove_coolant_check.grid(row=4, column=0, sticky='w', pady=(10, 0))
 
+        self.remove_flood_check = ttk.Checkbutton(
+            options_card,
+            text='Remove flood command (M8)',
+            variable=self.remove_flood_var
+        )
+        self.remove_flood_check.grid(row=5, column=0, sticky='w', pady=(5, 0))
+
         self.remove_toolchange_check = ttk.Checkbutton(
             options_card,
             text='Remove tool change commands (M6)',
             variable=self.remove_toolchange_var
         )
-        self.remove_toolchange_check.grid(row=5, column=0, sticky='w', pady=(5, 0))
+        self.remove_toolchange_check.grid(row=6, column=0, sticky='w', pady=(5, 0))
 
         # Actions and status
         action_frame = ttk.Frame(self.main_frame, style='TFrame', padding=(0, 15, 0, 0))
@@ -707,6 +731,7 @@ class ConverterGUI:
                 input_path,
                 output_path,
                 remove_coolant=self.remove_coolant_var.get(),
+                remove_flood=self.remove_flood_var.get(),
                 remove_toolchange=self.remove_toolchange_var.get(),
                 mist_port=mist_port
             )
