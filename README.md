@@ -33,7 +33,7 @@ Create a new version of your document to create a snapshot of the part. This is 
 
 ---
 
-# CAM Setup
+# Onshape CAM Studio Setup
 
 On the bottom bar click the `+` button to create a new tab and select `Create CAM Studio`
 
