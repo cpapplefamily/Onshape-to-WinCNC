@@ -76,6 +76,7 @@ Use keys that start with `_` — they are **ignored** by the script but perfect 
   }
 }
 
+  ```
 ## Rule Reference Table
 Rule,Effect,Before → After Example
 """M6"": """"",Remove tool change,T12 M6 → T12
