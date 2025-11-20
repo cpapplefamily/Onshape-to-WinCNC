@@ -4,12 +4,6 @@
 
 ---
 
-### File Location
-Place this file in the **same folder** Whoas `onshape-to-wincnc.pyw`  
-(The script automatically detects and uses a local copy first — perfect for per-machine or per-job settings)
-
----
-
 ### Purpose
 This JSON file **100% controls** what gets:
 - Removed
@@ -78,20 +72,22 @@ Use keys that start with `_` — they are **ignored** by the script but perfect 
 
   ```
 ## Rule Reference Table
-Rule,Effect,Before → After Example
-"""M6"": """"",Remove tool change,T12 M6 → T12
-"""M7"": ""M11C1"" / ""M9"": ""M12C1""",Convert mist coolant to WinCNC format,M7 → M11C1
-"""G17"": """", ""G40"": """", ""G80"": """"",Remove unsupported modal codes,Removed
-"""(N\\d+)"": ""[\\1]""",Comment line numbers,N150 → [N150]
-"`""(T(?:[7-9]","1[0-6]))"": ""[\1]""`",Comment only tools 7–16 (your rack)
-"""line_patterns"" → ""action"": ""comment""","Comment entire lines (O-lines, %)",O1000 → [O1000]
+| Rule | Effect | Before → After Example |
+|---|---|---|
+| `M6` | Remove tool change | `T12 M6` → `T12` |
+| `M7` / `M9` | Convert mist coolant to WinCNC format | `M7` → `M11C1` |
+| `G17`, `G40`, `G80` | Remove unsupported modal codes | Removed |
+| `(N\\d+)` | Comment line numbers | `N150` → `[N150]` |
+| `(T(?:[7-9]|1[0-6]))` | Comment only tools 7–16 (your rack) | `T12` → `[T12]` |
+| `line_patterns` → `action: comment` | Comment entire lines (O-lines, `%`) | `O1000` → `[O1000]` |
 
 ## Quick Customization Cheat Sheet
-Goal,Change This Line
-Comment all tool numbers,"""(T\\d+)"": ""[\\1]"""
-Remove all tool numbers,"""T\\d+"": """""
-Comment only T1–T6,"""(T[1-6])"": ""[\\1]"""
-Use mister on port 3,"""M7"": ""M11C3"", ""M9"": ""M12C3"""
-Keep M6 (you have an ATC),"Delete or comment out ""M6"": """""
-Remove line numbers instead of commenting,"""(N\\d+)"": """""
-Add flood coolant on port 2,"""M8"": ""M11C2"", add ""M9"": ""M12C2"" if needed"
+| Goal | Change This Line |
+|---|---|
+| Comment all tool numbers | "(T\\d+)": "[\\1]" |
+| Remove all tool numbers | "T\\d+": "" |
+| Comment only T1–T6 | "(T[1-6])": "[\\1]" |
+| Use mister on port 3 | "M7": "M11C3", "M9"": "M12C3" |
+| Keep M6 (you have an ATC) | "Delete or comment out "M6": "" |
+| Remove line numbers instead of commenting | "(N\\d+)": " |
+| Add flood coolant on port 2 | "M8": "M11C2", add "M9": "M12C2" if needed |
