@@ -390,21 +390,17 @@ def get_g_code(token: str):
     return None
 
 
-def convert_lines(
-    lines
-):
-    """
-    Convert a list of G-code lines into WinCNC-friendly format using JSON config.
-    """
+def convert_lines(lines):
     converted = []
     last_motion = None
 
+    """
+    Convert a list of G-code lines into WinCNC-friendly format using JSON config.
+    """
     for original_line in lines:
         line = original_line.rstrip('\n').rstrip('\r')
 
-        # ------------------------------------------------------------------
         # 1. Full-line handling: comment out or remove lines based on JSON rules
-        # ------------------------------------------------------------------
         handled = False
         for rule in _LINE_RULES:
             if rule["regex"].match(line):
@@ -418,68 +414,63 @@ def convert_lines(
                     handled = True
                     break
         if handled:
-            continue  # Skip further processing of this line
+            continue
 
-        # ------------------------------------------------------------------
-        # 2. Remove semicolon comments (still useful for inline ones)
-        # ------------------------------------------------------------------
+        # 2. Remove semicolon comments
         line = remove_semicolon_comments(line)
 
-        # ------------------------------------------------------------------
         # 3. Convert (comments) → [comments] and extract them
-        # ------------------------------------------------------------------
         content_line, bracket_comments = parentheses_to_bracket_lines(line)
         if not content_line.strip() and not bracket_comments:
             converted.append('')
             continue
 
-        # ------------------------------------------------------------------
         # 4. Split S-word from M3/M4/M5 if combined
-        # ------------------------------------------------------------------
+        split_lines = []
         for sm_line in split_spindle_speed_and_m(content_line.strip()):
             tokens = sm_line.split()
-
-            # ------------------------------------------------------------------
-            # 5. Apply JSON token replacement rules (remove M6, convert M7→M11C1, etc.)
-            # ------------------------------------------------------------------
-            tokens = apply_token_replacements(tokens)
             if not tokens:
                 continue
 
-            # ------------------------------------------------------------------
-            # 6. Split blocks with multiple G/M codes (WinCNC prefers one per line)
-            # ------------------------------------------------------------------
+            # ===== FIXED ORDER: SPLIT COMMANDS FIRST =====
             grouped = split_by_multiple_commands(tokens)
             for group in grouped:
                 if not group:
                     continue
+                # Temporarily join to apply arc/modal logic correctly
+                temp_line = ' '.join(group)
+                split_lines.append((group, temp_line))
 
-                # Determine current G-code (for non-modal G2/G3 support)
-                g_code_in_line = None
-                for tok in group:
-                    g_code = get_g_code(tok)
-                    if g_code:
-                        g_code_in_line = g_code
-                        break
+        # Now process each pre-split group
+        for raw_tokens, temp_line in split_lines:
+            # Re-determine motion mode from original tokens
+            g_code_in_line = None
+            for tok in raw_tokens:
+                g_code = get_g_code(tok)
+                if g_code:
+                    g_code_in_line = g_code
+                    break
 
-                if g_code_in_line:
-                    m = re.match(r'^G0?([0123])', g_code_in_line)
-                    if m:
-                        last_motion = f"G{m.group(1)}"
+            if g_code_in_line:
+                m = re.match(r'^G0?([0123])', g_code_in_line)
+                if m:
+                    last_motion = f"G{m.group(1)}"
 
-                # Re-insert last motion code (G0/G1/G2/G3) if needed for non-modal arcs/lines
-                else:
-                    if last_motion:
-                        has_arc = any(tok[0].upper() in ('I', 'J', 'K', 'R') for tok in group)
-                        has_lin = any(tok[0].upper() in ('X', 'Y', 'Z', 'A', 'B', 'C') for tok in group)
-                        if last_motion in ('G2', 'G3') and has_arc:
-                            group.insert(0, last_motion)
-                        elif last_motion in ('G0', 'G1') and has_lin:
-                            group.insert(0, last_motion)
+            # Insert modal motion code if needed (non-modal G2/G3 support)
+            if not g_code_in_line and last_motion:
+                has_arc = any(tok[0].upper() in ('I', 'J', 'K', 'R') for tok in raw_tokens)
+                has_lin = any(tok[0].upper() in ('X', 'Y', 'Z', 'A', 'B', 'C') for tok in raw_tokens)
+                if last_motion in ('G2', 'G3') and has_arc:
+                    raw_tokens.insert(0, last_motion)
+                elif last_motion in ('G0', 'G1') and has_lin:
+                    raw_tokens.insert(0, last_motion)
 
-                converted.append(' '.join(group))
+            # ===== NOW APPLY TOKEN REPLACEMENTS (after splitting!) =====
+            final_tokens = apply_token_replacements(raw_tokens)
+            if final_tokens:
+                converted.append(' '.join(final_tokens))
 
-        # Add extracted bracket comments
+        # Add extracted bracket comments (from parentheses)
         converted.extend(bracket_comments)
 
     # ------------------------------------------------------------------
