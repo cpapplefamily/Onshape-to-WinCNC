@@ -26,6 +26,7 @@ when the conversion succeeds or if an error occurs.
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import tkinter as tk
@@ -37,9 +38,73 @@ from typing import List, Tuple, Any
 # WindowsC:\Users\<YourUsername>\.onshape_to_wincnc_settings.json
 # macOS/Users/<YourUsername>/.onshape_to_wincnc_settings.json
 # Linux/home/<yourusername>/.onshape_to_wincnc_settings.json
-SETTINGS_FILE = Path.home() / '.onshape_to_wincnc_settings.json'
+SETTINGS_FILE = Path.home() / "AppData" / "Roaming" / "OnshapeToWinCNC" / '.onshape_to_wincnc_settings.json'
 
-TOKEN_REPLACEMENTS_FILE = Path(__file__).with_name("token_replacements.json")
+# Smart path: external file that users can edit
+def get_external_data_file(filename: str) -> Path:
+    """
+    Returns a writable path for data files (like token_replacements.json)
+    - Dev mode (.pyw): same folder as script
+    - Frozen exe: %APPDATA%/OnshapeToWinCNC/filename
+    Creates folder if needed.
+    """
+    if getattr(sys, 'frozen', False):
+        # Running as compiled exe
+        app_dir = Path.home() / "AppData" / "Roaming" / "OnshapeToWinCNC"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        return app_dir / filename
+    else:
+        # Running as .py script
+        return Path(__file__).with_name(filename)
+
+
+def ensure_token_file_exists():
+    """Copy bundled token_replacements.json to external location on first run"""
+    target = get_external_data_file("token_replacements.json")
+    if target.exists():
+        return target
+
+    # Try to extract from bundled resources (PyInstaller)
+    if getattr(sys, 'frozen', False):
+        import tempfile
+        bundled_path = Path(sys._MEIPASS) / "token_replacements.json"  # PyInstaller temp dir
+        if bundled_path.exists():
+            try:
+                import shutil
+                shutil.copy2(bundled_path, target)
+                print(f"Extracted token_replacements.json to {target}")
+                return target
+            except Exception as e:
+                print(f"Failed to extract token file: {e}")
+
+    # Fallback: create minimal working version
+    default_content = {
+        "line_patterns": [
+            {"match": "^[Oo]\\d+.*$", "action": "comment", "prefix": "[", "suffix": "]"},
+            {"match": "^%.*$", "action": "comment", "prefix": "[", "suffix": ")"}
+        ],
+        "token_replacements": {
+            "M6": "",
+            "M7": "M11C8 [ ;Coolant On ]",
+            "M8": "M11C8 [ ;Coolant On ]",
+            "M9": "M12C8 [ ;Coolant Off ]",
+            "G17": " [ G17 ;XY Plane Selection ]",
+            "G40": "[ G40 ;Tool Radius Compensation Off ]",
+            "G49": "[ G49 ;Tool Length Offset Cancel ]",
+            "G80": "G80 [ ;Cancel Canned Cycle ]",
+            "(T(?:[7-9]|1[0-6]))": "[\\1]"
+        }
+    }
+    try:
+        target.write_text(json.dumps(default_content, indent=2), encoding="utf-8")
+        print(f"Created default token_replacements.json at {target}")
+    except Exception as e:
+        print(f"Could not create token file: {e}")
+    return target
+
+
+# THIS is the path you should use everywhere
+TOKEN_REPLACEMENTS_FILE = ensure_token_file_exists()
 
 
 
