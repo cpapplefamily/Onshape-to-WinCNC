@@ -31,7 +31,7 @@ jobs:
         run: |
           pyinstaller --onefile `
                       --windowed `
-                      --icon="Onshape-to-WinCNC.ico" `
+                      --icon="app.ico" `
                       --add-data "token_replacements.json;." `
                       --name "Onshape-to-WinCNC" `
                       "onshape-to-wincnc.pyw"
